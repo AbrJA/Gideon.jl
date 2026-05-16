@@ -10,7 +10,7 @@
 #       - λ/2 (||X||² + ||Y||²)
 # ──────────────────────────────────────────────────────────────────────────────
 
-using SparseArrays, LinearAlgebra, Random
+using SparseArrays, LinearAlgebra, Random, LoopVectorization
 
 """
     LMF{T} <: AbstractMatrixFactorization
@@ -61,9 +61,10 @@ function fit!(model::LMF{T}, X::SparseMatrixCSC{Tv,Ti};
                 r   = T(nz[idx])
                 c   = one(T) + model.α * r
 
-                xu = @view model.user_factors[:, u]
-                yj = @view model.item_factors[:, j]
-                s  = dot(xu, yj)
+                s  = zero(T)
+                @inbounds @simd for f in 1:k
+                    s += model.user_factors[f, u] * model.item_factors[f, j]
+                end
 
                 # Gradient of logistic loss
                 σ_s = sigmoid(s)
@@ -71,12 +72,14 @@ function fit!(model::LMF{T}, X::SparseMatrixCSC{Tv,Ti};
 
                 lr = model.learning_rate
                 λ  = model.λ
+                U = model.user_factors
+                V = model.item_factors
 
-                @inbounds for f in 1:k
-                    gu = grad_mult * yj[f] - λ * xu[f]
-                    gi = grad_mult * xu[f] - λ * yj[f]
-                    model.user_factors[f, u] += lr * gu
-                    model.item_factors[f, j] += lr * gi
+                @inbounds @simd for f in 1:k
+                    gu = grad_mult * V[f, j] - λ * U[f, u]
+                    gi = grad_mult * U[f, u] - λ * V[f, j]
+                    U[f, u] += lr * gu
+                    V[f, j] += lr * gi
                 end
 
                 # Loss: r·s - c·log(1+exp(s))
@@ -86,19 +89,22 @@ function fit!(model::LMF{T}, X::SparseMatrixCSC{Tv,Ti};
             # Negative sampling for item j
             for _ in 1:model.n_negative
                 u_neg = rand(rng, 1:n_users)
-                xu = @view model.user_factors[:, u_neg]
-                yj = @view model.item_factors[:, j]
-                s  = dot(xu, yj)
+                s  = zero(T)
+                @inbounds @simd for f in 1:k
+                    s += model.user_factors[f, u_neg] * model.item_factors[f, j]
+                end
                 σ_s = sigmoid(s)
 
                 lr = model.learning_rate
                 λ  = model.λ
+                U = model.user_factors
+                V = model.item_factors
 
-                @inbounds for f in 1:k
-                    gu = -σ_s * yj[f] - λ * xu[f]
-                    gi = -σ_s * xu[f] - λ * yj[f]
-                    model.user_factors[f, u_neg] += lr * gu
-                    model.item_factors[f, j]     += lr * gi
+                @inbounds @simd for f in 1:k
+                    gu = -σ_s * V[f, j] - λ * U[f, u_neg]
+                    gi = -σ_s * U[f, u_neg] - λ * V[f, j]
+                    U[f, u_neg] += lr * gu
+                    V[f, j]     += lr * gi
                 end
                 total_loss -= log1pexp(s)
             end

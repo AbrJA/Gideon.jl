@@ -11,7 +11,7 @@
 # where f(x) = (x/x_max)^α if x < x_max, else 1.
 # ──────────────────────────────────────────────────────────────────────────────
 
-using SparseArrays, LinearAlgebra, Random
+using SparseArrays, LinearAlgebra, Random, LoopVectorization
 
 """
     GloVe{T} <: AbstractMatrixFactorization
@@ -151,11 +151,12 @@ function _glove_epoch!(model::GloVe{T}, rows, cols, vals, order) where {T}
         grad_common = T(2) * weight * diff
 
         # AdaGrad update — Hogwild writes (no locks)
-        @inbounds for f in 1:k
+        # SIMD-vectorized gradient computation and weight updates
+        @inbounds @simd for f in 1:k
             g_main = grad_common * Wc[f, j] + λ * W[f, i]
             g_ctx  = grad_common * W[f, i]  + λ * Wc[f, j]
-            gW[f, i]  += g_main^2
-            gWc[f, j] += g_ctx^2
+            gW[f, i]  += g_main * g_main
+            gWc[f, j] += g_ctx * g_ctx
             W[f, i]  -= lr * g_main / sqrt(gW[f, i])
             Wc[f, j] -= lr * g_ctx  / sqrt(gWc[f, j])
         end

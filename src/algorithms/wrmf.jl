@@ -20,7 +20,7 @@
 #   • Base.Threads.@threads :static for stable thread IDs
 # ──────────────────────────────────────────────────────────────────────────────
 
-using LinearAlgebra, SparseArrays, Random
+using LinearAlgebra, SparseArrays, Random, LoopVectorization
 
 """
     WRMF{T} <: AbstractMatrixFactorization
@@ -80,13 +80,15 @@ end
 
 function fit!(model::WRMF{T}, X::SparseMatrixCSC{Tv,Ti};
               rng::AbstractRNG = Random.default_rng(),
-              convergence_tol::Float64 = 0.005) where {T,Tv,Ti}
+              convergence_tol::Float64 = 0.005,
+              U_init::Union{Nothing, Matrix{T}} = nothing,
+              V_init::Union{Nothing, Matrix{T}} = nothing) where {T,Tv,Ti}
     n_users, n_items = size(X)
     k = model.rank
 
-    # Initialise factor matrices (rank × n)
-    model.user_factors = init_factors(rng, k, n_users)
-    model.item_factors = init_factors(rng, k, n_items)
+    # Initialise factor matrices (rank × n); use provided warm-start if given
+    model.user_factors = isnothing(U_init) ? init_factors(rng, k, n_users) : copy(U_init)
+    model.item_factors = isnothing(V_init) ? init_factors(rng, k, n_items) : copy(V_init)
     model.user_bias    = zeros(T, n_users)
     model.item_bias    = zeros(T, n_items)
     model.global_bias  = zero(T)
@@ -375,12 +377,36 @@ function _implicit_matvec!(
     k::Int,
 ) where {T}
     BLAS.gemv!('N', one(T), base_gram, v, zero(T), result)
-    @inbounds for pos in eachindex(indices)
-        i = indices[pos]
-        w = weights[pos]
-        iszero(w) && continue
-        d = BLAS.dot(k, @view(Y[:, i]), 1, v, 1)
-        BLAS.axpy!(w * d, @view(Y[:, i]), result)
+    n_nz = length(indices)
+    if n_nz == 0
+        return
+    end
+    # For very sparse users (< 32 nnz), avoid BLAS overhead with manual dot+axpy.
+    # At scale (MEGA: 1M×100K, ~10 nnz/user), this eliminates function-call overhead.
+    if n_nz < 32
+        @inbounds for pos in 1:n_nz
+            i = indices[pos]
+            w = weights[pos]
+            iszero(w) && continue
+            # Manual dot product — avoids BLAS.dot function call overhead for k≤64
+            d = zero(T)
+            @simd for f in 1:k
+                d += Y[f, i] * v[f]
+            end
+            # Manual axpy — avoids BLAS.axpy! overhead
+            wd = w * d
+            @simd for f in 1:k
+                result[f] += wd * Y[f, i]
+            end
+        end
+    else
+        @inbounds for pos in eachindex(indices)
+            i = indices[pos]
+            w = weights[pos]
+            iszero(w) && continue
+            d = BLAS.dot(k, @view(Y[:, i]), 1, v, 1)
+            BLAS.axpy!(w * d, @view(Y[:, i]), result)
+        end
     end
 end
 
@@ -393,6 +419,7 @@ function _compute_loss(model::WRMF{T}, X::SparseMatrixCSC) where {T}
     V = model.item_factors  # k × n_items
     λ = model.λ
     α = model.α
+    k = model.rank
 
     loss = zero(T)
     rv = rowvals(X)
@@ -402,7 +429,10 @@ function _compute_loss(model::WRMF{T}, X::SparseMatrixCSC) where {T}
         for idx in nzrange(X, j)
             i = rv[idx]
             r = T(nz[idx])
-            pred = dot(@view(U[:, i]), @view(V[:, j]))
+            pred = zero(T)
+            @inbounds @simd for f in 1:k
+                pred += U[f, i] * V[f, j]
+            end
             if model.feedback == IMPLICIT
                 c = one(T) + α * r
                 loss += c * (one(T) - pred)^2

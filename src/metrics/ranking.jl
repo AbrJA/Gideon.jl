@@ -22,9 +22,10 @@ function ap_at_k(predictions::AbstractMatrix{<:Integer},
                  k::Int = size(predictions, 2))
     n_users = size(predictions, 1)
     @assert n_users == size(actual, 1) "Row count mismatch"
+    actual_t = _transpose_for_row_access(actual)
     result = Vector{Float64}(undef, n_users)
     @inbounds for u in 1:n_users
-        result[u] = _ap_single(predictions, actual, u, k)
+        result[u] = _ap_single(predictions, actual_t, u, k)
     end
     result
 end
@@ -72,9 +73,10 @@ function ndcg_at_k(predictions::AbstractMatrix{<:Integer},
                    k::Int = size(predictions, 2))
     n_users = size(predictions, 1)
     @assert n_users == size(actual, 1)
+    actual_t = _transpose_for_row_access(actual)
     result = Vector{Float64}(undef, n_users)
     @inbounds for u in 1:n_users
-        result[u] = _ndcg_single(predictions, actual, u, k)
+        result[u] = _ndcg_single(predictions, actual_t, u, k)
     end
     result
 end
@@ -118,9 +120,10 @@ function precision_at_k(predictions::AbstractMatrix{<:Integer},
                         k::Int = size(predictions, 2))
     n_users = size(predictions, 1)
     @assert n_users == size(actual, 1)
+    actual_t = _transpose_for_row_access(actual)
     result = Vector{Float64}(undef, n_users)
     @inbounds for u in 1:n_users
-        result[u] = _precision_single(predictions, actual, u, k)
+        result[u] = _precision_single(predictions, actual_t, u, k)
     end
     result
 end
@@ -152,9 +155,10 @@ function recall_at_k(predictions::AbstractMatrix{<:Integer},
                      k::Int = size(predictions, 2))
     n_users = size(predictions, 1)
     @assert n_users == size(actual, 1)
+    actual_t = _transpose_for_row_access(actual)
     result = Vector{Float64}(undef, n_users)
     @inbounds for u in 1:n_users
-        relevant = Set(_relevant_items(actual, u))
+        relevant = Set(_relevant_items(actual_t, u))
         if isempty(relevant)
             result[u] = 0.0
             continue
@@ -173,33 +177,25 @@ end
 
 # ──────────────── Helpers: extract relevant items from sparse row ────────────────
 
-function _relevant_items(actual::SparseMatrixCSC, u::Int)
-    # For CSC, row `u` entries are scattered across columns.
-    # Collect column indices where row `u` has a non-zero.
-    items = Int[]
-    rv = rowvals(actual)
-    @inbounds for col in axes(actual, 2)
-        for idx in nzrange(actual, col)
-            if rv[idx] == u
-                push!(items, col)
-            end
-        end
-    end
-    items
+# Cache-friendly row extraction: transpose to CSC(Aᵀ) so row u = column u in Aᵀ.
+# This is O(nnz_u) per user instead of O(nnz) for the CSC column scan.
+
+function _transpose_for_row_access(actual::SparseMatrixCSC)
+    # Aᵀ stored as CSC: column u of Aᵀ = row u of A
+    SparseMatrixCSC(actual')
 end
 
-function _relevant_items_with_scores(actual::SparseMatrixCSC, u::Int)
-    items = Int[]
-    scores = Float64[]
-    rv = rowvals(actual)
-    nz = nonzeros(actual)
-    @inbounds for col in axes(actual, 2)
-        for idx in nzrange(actual, col)
-            if rv[idx] == u
-                push!(items, col)
-                push!(scores, Float64(nz[idx]))
-            end
-        end
-    end
+function _relevant_items(actual_t::SparseMatrixCSC, u::Int)
+    # actual_t is the transpose: columns = original rows
+    rv = rowvals(actual_t)
+    collect(Int, @view rv[nzrange(actual_t, u)])
+end
+
+function _relevant_items_with_scores(actual_t::SparseMatrixCSC, u::Int)
+    rv = rowvals(actual_t)
+    nz = nonzeros(actual_t)
+    rng = nzrange(actual_t, u)
+    items = collect(Int, @view rv[rng])
+    scores = [Float64(nz[idx]) for idx in rng]
     (items, scores)
 end

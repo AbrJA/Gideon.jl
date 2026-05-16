@@ -4,8 +4,8 @@ using LinearAlgebra
 using SparseArrays
 using SparseMatricesCSR
 using Random
-using LinearAlgebra, SparseArrays, Random
 using StaticArrays
+using LoopVectorization
 
 # ── Core types & API ──
 include("types.jl")

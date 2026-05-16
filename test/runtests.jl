@@ -345,4 +345,9 @@ using JET
         end
     end
 
+    # ──────────────────────────────────────────────────────────
+    # Correctness vs R reference (Tier 1 always; Tier 2 with fixtures)
+    # ──────────────────────────────────────────────────────────
+    include("r_correctness.jl")
+
 end
