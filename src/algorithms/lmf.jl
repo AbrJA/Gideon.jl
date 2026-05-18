@@ -10,12 +10,26 @@
 #       - λ/2 (||X||² + ||Y||²)
 # ──────────────────────────────────────────────────────────────────────────────
 
-using SparseArrays, LinearAlgebra, Random, LoopVectorization, Dates
-
 """
     LMF{T} <: AbstractMatrixFactorization
 
-Logistic Matrix Factorization for implicit feedback.
+Logistic Matrix Factorization for implicit feedback via SGD with negative sampling.
+
+# Constructor
+```julia
+LMF(; rank=10, λ=0.1, α=1.0, learning_rate=0.01, max_iter=10,
+      n_negative=4, convergence_tol=-1.0, verbose=true)
+```
+
+# Example
+```julia
+using SparseArrays, Gideon
+
+X = sprand(1000, 500, 0.01)
+model = LMF(rank=32, max_iter=20, learning_rate=0.01)
+fit!(model, X)
+top_items = predict(model, X; k=10)
+```
 """
 mutable struct LMF{T<:AbstractFloat} <: AbstractMatrixFactorization
     rank::Int
@@ -23,7 +37,8 @@ mutable struct LMF{T<:AbstractFloat} <: AbstractMatrixFactorization
     α::T
     learning_rate::T
     max_iter::Int
-    n_negative::Int  # negative samples per positive
+    n_negative::Int
+    convergence_tol::T
     verbose::Bool
     user_factors::Matrix{T}
     item_factors::Matrix{T}
@@ -37,12 +52,22 @@ function LMF(;
     learning_rate::Float64 = 0.01,
     max_iter::Int = 10,
     n_negative::Int = 4,
+    convergence_tol::Float64 = -1.0,
     verbose::Bool = true,
 )
-    LMF{Float64}(rank, λ, α, learning_rate, max_iter, n_negative, verbose,
-                 Matrix{Float64}(undef,0,0), Matrix{Float64}(undef,0,0), false)
+    @assert rank >= 1 "rank must be ≥ 1"
+    @assert λ >= 0.0 "λ must be non-negative"
+    @assert learning_rate > 0.0 "learning_rate must be positive"
+    @assert n_negative >= 1 "n_negative must be ≥ 1"
+    LMF{Float64}(rank, λ, α, learning_rate, max_iter, n_negative, convergence_tol,
+                 verbose, Matrix{Float64}(undef,0,0), Matrix{Float64}(undef,0,0), false)
 end
 
+"""
+    fit!(model::LMF, X; rng) -> model
+
+Fit the LMF model on user-item interaction matrix `X` (n_users × n_items).
+"""
 function fit!(model::LMF{T}, X::SparseMatrixCSC{Tv,Ti};
               rng::AbstractRNG = Random.default_rng()) where {T,Tv,Ti}
     n_users, n_items = size(X)
@@ -53,13 +78,14 @@ function fit!(model::LMF{T}, X::SparseMatrixCSC{Tv,Ti};
 
     rv = rowvals(X)
     nz = nonzeros(X)
-    train_start = now()
+
+    monitor = ConvergenceMonitor{T}(tol=T(model.convergence_tol), min_iter=2)
 
     for iter in 1:model.max_iter
-        iter_start = now()
+        iter_start = time_ns()
         total_loss = zero(T)
 
-        for j in axes(X, 2)  # iterate items (columns)
+        for j in axes(X, 2)
             for idx in nzrange(X, j)
                 u   = rv[idx]
                 r   = T(nz[idx])
@@ -70,7 +96,6 @@ function fit!(model::LMF{T}, X::SparseMatrixCSC{Tv,Ti};
                     s += model.user_factors[f, u] * model.item_factors[f, j]
                 end
 
-                # Gradient of logistic loss
                 σ_s = sigmoid(s)
                 grad_mult = r - c * σ_s
 
@@ -86,11 +111,10 @@ function fit!(model::LMF{T}, X::SparseMatrixCSC{Tv,Ti};
                     V[f, j] += lr * gi
                 end
 
-                # Loss: r·s - c·log(1+exp(s))
                 total_loss += r * s - c * log1pexp(s)
             end
 
-            # Negative sampling for item j
+            # Negative sampling
             for _ in 1:model.n_negative
                 u_neg = rand(rng, 1:n_users)
                 s  = zero(T)
@@ -114,22 +138,32 @@ function fit!(model::LMF{T}, X::SparseMatrixCSC{Tv,Ti};
             end
         end
 
-        # Regularization
         total_loss -= model.λ / 2 * (sum(abs2, model.user_factors) + sum(abs2, model.item_factors))
-        iter_seconds = Dates.value(now() - iter_start) / 1000.0
-        total_seconds = Dates.value(now() - train_start) / 1000.0
+
+        iter_seconds = (time_ns() - iter_start) / 1e9
+        total_seconds = elapsed_seconds(monitor)
         if model.verbose
-            @info "LMF iteration" iter=iter loss=total_loss iter_seconds=iter_seconds total_seconds=total_seconds
+            log_iteration("LMF", iter, model.max_iter, Float64(total_loss),
+                         iter_seconds, total_seconds)
         end
-        @debug "LMF iter=$iter  loss=$total_loss"
+
+        if record!(monitor, total_loss)
+            model.verbose && @info "[LMF] converged at iteration $iter"
+            break
+        end
     end
     model.is_fitted = true
     model
 end
 
+"""
+    predict(model::LMF, X; k=10) -> Matrix{Int}
+
+Return top-k item indices for each user. Returns `n_users × k` matrix.
+"""
 function predict(model::LMF{T}, X::SparseMatrixCSC; k::Int = 10) where {T}
     model.is_fitted || error("Model not fitted")
-    scores = model.user_factors' * model.item_factors  # n_users × n_items
+    scores = model.user_factors' * model.item_factors
     n_users = size(scores, 1)
     n_items = size(scores, 2)
     k_actual = min(k, n_items)

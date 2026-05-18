@@ -2,8 +2,6 @@
 # Utility helpers shared across algorithms
 # ──────────────────────────────────────────────────────────────────────────────
 
-using LinearAlgebra, Random
-
 """
     init_factors(rng, rank, n; scale=0.01)
 
@@ -17,7 +15,7 @@ end
 """
     sigmoid(x)
 
-Numerically stable logistic sigmoid.
+Numerically stable logistic sigmoid: σ(x) = 1/(1+exp(-x)).
 """
 @inline function sigmoid(x::T) where {T<:AbstractFloat}
     if x >= zero(T)
@@ -50,3 +48,21 @@ end
 Safe reciprocal that avoids division by zero.
 """
 @inline safe_inv(x::T; ε::T=T(1e-12)) where {T<:AbstractFloat} = one(T) / (x + ε)
+
+"""
+    link_function(family::Family, x)
+
+Apply the GLM link function for the given family:
+- `BINOMIAL` → sigmoid(x)
+- `GAUSSIAN` → x (identity)
+- `POISSON` → exp(x)
+"""
+@inline function link_function(family::Family, x::T) where {T<:AbstractFloat}
+    if family == BINOMIAL
+        return sigmoid(x)
+    elseif family == GAUSSIAN
+        return x
+    else  # POISSON
+        return exp(x)
+    end
+end

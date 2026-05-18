@@ -1,14 +1,18 @@
-using Documenter, Example
+using Documenter, Gideon
 
-makedocs(modules = [Example],
-         sitename = "Example.jl",
-         format = Documenter.HTML()
-         )
+makedocs(
+    modules  = [Gideon],
+    sitename = "Gideon.jl",
+    format   = Documenter.HTML(prettyurls = get(ENV, "CI", nothing) == "true"),
+    pages    = [
+        "Home"       => "index.md",
+        "Algorithms" => "algorithms.md",
+        "Metrics"    => "metrics.md",
+        "API"        => "api.md",
+    ],
+)
 
 deploydocs(
-    repo = "github.com/JuliaLang/Example.jl.git",
-    target = "build",
-    deps   = nothing,
-    make   = nothing,
+    repo = "github.com/ajaimes/Gideon.jl.git",
     push_preview = true,
 )

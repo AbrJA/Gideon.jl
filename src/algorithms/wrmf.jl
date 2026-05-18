@@ -20,41 +20,55 @@
 #   • Base.Threads.@threads :static for stable thread IDs
 # ──────────────────────────────────────────────────────────────────────────────
 
-using LinearAlgebra, SparseArrays, Random, LoopVectorization, Dates
-
 """
     WRMF{T} <: AbstractMatrixFactorization
 
 Weighted Regularized Matrix Factorization via Alternating Least Squares.
+
+Supports implicit feedback (Hu et al. 2008) and explicit feedback (MSE).
+Three solvers available: Cholesky (exact), Conjugate Gradient (approximate, fast),
+and NNLS (non-negative matrix factorization).
+
+# Constructor
+```julia
+WRMF(; rank=10, λ=0.1, α=1.0, max_iter=10, convergence_tol=0.005,
+       solver=CONJUGATE_GRADIENT, cg_steps=3, feedback=IMPLICIT, verbose=true)
+```
 
 # Fields
 - `rank::Int`          — latent dimension
 - `λ::T`              — regularisation strength
 - `α::T`              — confidence weight for implicit feedback
 - `max_iter::Int`      — maximum ALS iterations
-- `solver::ALSSolver`  — `CHOLESKY` or `CONJUGATE_GRADIENT`
-- `cg_steps::Int`      — max CG inner iterations (only used when solver == CONJUGATE_GRADIENT)
+- `convergence_tol::T` — relative loss tolerance for early stopping (<0 disables)
+- `solver::ALSSolver`  — `CHOLESKY`, `CONJUGATE_GRADIENT`, or `NNLS`
+- `cg_steps::Int`      — max CG inner iterations (only for CG solver)
 - `feedback::FeedbackType` — `IMPLICIT` or `EXPLICIT`
-- `user_factors::Matrix{T}`  — rank × n_users  (set after `fit!`)
-- `item_factors::Matrix{T}`  — rank × n_items  (set after `fit!`)
-- `user_bias::Vector{T}`     — per-user bias   (length n_users)
-- `item_bias::Vector{T}`     — per-item bias   (length n_items)
-- `global_bias::T`           — global mean
+- `user_factors::Matrix{T}`  — rank × n_users (set after `fit!`)
+- `item_factors::Matrix{T}`  — rank × n_items (set after `fit!`)
+
+# Example
+```julia
+using SparseArrays, Gideon
+
+X = sprand(1000, 500, 0.01)
+model = WRMF(rank=64, λ=0.1, α=40.0, max_iter=15, solver=CONJUGATE_GRADIENT)
+fit!(model, X)
+scores = predict(model, X; k=10)
+```
 """
 mutable struct WRMF{T<:AbstractFloat} <: AbstractMatrixFactorization
     rank::Int
     λ::T
     α::T
     max_iter::Int
+    convergence_tol::T
     solver::ALSSolver
     cg_steps::Int
     feedback::FeedbackType
     verbose::Bool
     user_factors::Matrix{T}
     item_factors::Matrix{T}
-    user_bias::Vector{T}
-    item_bias::Vector{T}
-    global_bias::T
     is_fitted::Bool
 end
 
@@ -63,16 +77,22 @@ function WRMF(;
     λ::Float64 = 0.1,
     α::Float64 = 1.0,
     max_iter::Int = 10,
+    convergence_tol::Float64 = 0.005,
     solver::ALSSolver = CONJUGATE_GRADIENT,
     cg_steps::Int = 3,
     feedback::FeedbackType = IMPLICIT,
     verbose::Bool = true,
 )
+    @assert rank >= 1 "rank must be ≥ 1"
+    @assert λ >= 0.0 "λ must be non-negative"
+    @assert α >= 0.0 "α must be non-negative"
+    @assert max_iter >= 1 "max_iter must be ≥ 1"
+    @assert cg_steps >= 1 "cg_steps must be ≥ 1"
     WRMF{Float64}(
-        rank, λ, α, max_iter, solver, cg_steps, feedback, verbose,
-        Matrix{Float64}(undef, 0, 0),   # user_factors placeholder
-        Matrix{Float64}(undef, 0, 0),   # item_factors placeholder
-        Float64[], Float64[], 0.0, false,
+        rank, λ, α, max_iter, convergence_tol, solver, cg_steps, feedback, verbose,
+        Matrix{Float64}(undef, 0, 0),
+        Matrix{Float64}(undef, 0, 0),
+        false,
     )
 end
 
@@ -80,50 +100,53 @@ end
 # fit!
 # ──────────────────────────────────────────────────────────────────────────────
 
+"""
+    fit!(model::WRMF, X::SparseMatrixCSC; rng, U_init, V_init) -> model
+
+Fit the WRMF model on user-item sparse matrix `X` (n_users × n_items).
+
+# Keyword Arguments
+- `rng::AbstractRNG = Random.default_rng()` — random number generator
+- `U_init::Union{Nothing, Matrix}` — warm-start user factors (rank × n_users)
+- `V_init::Union{Nothing, Matrix}` — warm-start item factors (rank × n_items)
+"""
 function fit!(model::WRMF{T}, X::SparseMatrixCSC{Tv,Ti};
               rng::AbstractRNG = Random.default_rng(),
-              convergence_tol::Float64 = 0.005,
               U_init::Union{Nothing, Matrix{T}} = nothing,
               V_init::Union{Nothing, Matrix{T}} = nothing) where {T,Tv,Ti}
     n_users, n_items = size(X)
     k = model.rank
 
-    # Initialise factor matrices (rank × n); use provided warm-start if given
+    # Initialise factor matrices
     model.user_factors = isnothing(U_init) ? init_factors(rng, k, n_users) : copy(U_init)
     model.item_factors = isnothing(V_init) ? init_factors(rng, k, n_items) : copy(V_init)
-    model.user_bias    = zeros(T, n_users)
-    model.item_bias    = zeros(T, n_items)
-    model.global_bias  = zero(T)
 
     # Build transpose for fast row access
     Xt = SparseMatrixCSC(X')  # n_items × n_users
 
-    prev_loss = T(Inf)
-    train_start = now()
+    monitor = ConvergenceMonitor{T}(tol=T(model.convergence_tol), min_iter=2)
 
     for iter in 1:model.max_iter
-        iter_start = now()
-        # ---- Update user factors (fixing items) ----
-        # Xt columns = users, row values = item indices → indexes into item_factors
-        _als_sweep!(model, Xt, model.user_factors, model.item_factors, n_users, true)
+        iter_start = time_ns()
 
-        # ---- Update item factors (fixing users) ----
-        # X columns = items, row values = user indices → indexes into user_factors
-        _als_sweep!(model, X, model.item_factors, model.user_factors, n_items, false)
+        # Update user factors (fixing items)
+        _als_sweep!(model, Xt, model.user_factors, model.item_factors, n_users)
+        # Update item factors (fixing users)
+        _als_sweep!(model, X, model.item_factors, model.user_factors, n_items)
 
         loss = _compute_loss(model, X)
-        iter_seconds = Dates.value(now() - iter_start) / 1000.0
-        total_seconds = Dates.value(now() - train_start) / 1000.0
-        if model.verbose
-            @info "WRMF iteration" iter=iter loss=loss iter_seconds=iter_seconds total_seconds=total_seconds
-        end
-        @debug "WRMF iter=$iter  loss=$loss"
+        iter_seconds = (time_ns() - iter_start) / 1e9
+        total_seconds = elapsed_seconds(monitor)
 
-        if iter > 1 && abs(prev_loss - loss) / (abs(prev_loss) + T(1e-12)) < convergence_tol
-            @debug "WRMF converged at iter=$iter"
+        if model.verbose
+            log_iteration("WRMF", iter, model.max_iter, Float64(loss),
+                         iter_seconds, total_seconds)
+        end
+
+        if record!(monitor, loss)
+            model.verbose && @info "[WRMF] converged at iteration $iter"
             break
         end
-        prev_loss = loss
     end
     model.is_fitted = true
     model
@@ -135,15 +158,11 @@ end
 
 function _als_sweep!(
     model::WRMF{T},
-    A::SparseMatrixCSC,      # n_entities × n_fixed   (CSC — columns = fixed side)
-    factors::Matrix{T},      # k × n_entities  (to be updated)
-    fixed::Matrix{T},        # k × n_fixed
+    A::SparseMatrixCSC,
+    factors::Matrix{T},
+    fixed::Matrix{T},
     n_entities::Int,
-    is_user_side::Bool,
 ) where {T}
-    k  = model.rank
-    λ  = model.λ
-
     if model.solver == CHOLESKY || model.solver == NNLS
         _als_sweep_cholesky!(model, A, factors, fixed, n_entities)
     else
@@ -167,17 +186,14 @@ function _als_sweep_cholesky!(
     is_nnls     = model.solver == NNLS
 
     # YᵀY via BLAS syrk (symmetric rank-k: C = α·A·Aᵀ + β·C)
-    # Only upper triangle is valid; we symmetrize before use.
     YtY = Matrix{T}(undef, k, k)
     BLAS.syrk!('U', 'N', one(T), fixed, zero(T), YtY)
-    LinearAlgebra.copytri!(YtY, 'U')   # mirror upper → lower
+    LinearAlgebra.copytri!(YtY, 'U')
 
     rv = rowvals(A)
     nz = nonzeros(A)
 
-    # Pre-allocate per-thread buffers.
-    # maxthreadid() covers interactive threads (IDs > nthreads()) that may also
-    # participate in @threads :static on the calling task's thread.
+    # Pre-allocate per-thread buffers
     nt = Threads.maxthreadid()
     gram_bufs = [Matrix{T}(undef, k, k) for _ in 1:nt]
     rhs_bufs  = [Vector{T}(undef, k)    for _ in 1:nt]
@@ -187,7 +203,7 @@ function _als_sweep_cholesky!(
         gram = gram_bufs[tid]
         rhs  = rhs_bufs[tid]
 
-        # gram ← YᵀY + λI   (copy from shared, then add diagonal)
+        # gram ← YᵀY + λI
         copyto!(gram, YtY)
         @inbounds for d in 1:k
             gram[d, d] += λ
@@ -201,25 +217,21 @@ function _als_sweep_cholesky!(
 
             if is_implicit
                 cui = one(T) + α * rui
-                # gram += (cᵤᵢ - 1) · yᵢ yᵢᵀ  via BLAS rank-1 symmetric update
                 BLAS.syr!('U', cui - one(T), yi, gram)
-                # rhs += cᵤᵢ · yᵢ
                 BLAS.axpy!(cui, yi, rhs)
             else
                 BLAS.axpy!(rui, yi, rhs)
             end
         end
 
-        # Mirror upper triangle (syr! only writes upper)
+        # Mirror upper triangle
         LinearAlgebra.copytri!(gram, 'U')
 
-        # In-place Cholesky: potrf! factors gram → U, potrs! solves using U
+        # In-place Cholesky solve
         LAPACK.potrf!('U', gram)
-        LAPACK.potrs!('U', gram, rhs)   # rhs is overwritten with solution
+        LAPACK.potrs!('U', gram, rhs)
 
         if is_nnls
-            # Coordinate-descent NNLS refinement  (true NNLS, not a clamp)
-            # Restart from the Cholesky solution projected to non-negative orthant
             rhs .= max.(rhs, zero(T))
             _nnls_cd!(rhs, YtY, fixed, rv, nz, nzrange(A, u), k, α, λ, is_implicit)
         end
@@ -231,15 +243,14 @@ end
 """
     _nnls_cd!(x, YtY, Y, rv, nz, col_range, k, α, λ, is_implicit; max_iter=50)
 
-Block-coordinate descent NNLS: minimises ‖Ax - b‖² s.t. x ≥ 0
-where A = YtY + λI + Σ wᵢ yᵢyᵢᵀ.  Updates `x` in-place.
+Block-coordinate descent NNLS: minimises ‖Ax - b‖² s.t. x ≥ 0.
+Updates `x` in-place.
 """
 function _nnls_cd!(
     x::Vector{T}, YtY::Matrix{T}, Y::Matrix{T},
     rv, nz, col_range, k::Int,
     α::T, λ::T, is_implicit::Bool; max_iter::Int = 50,
 ) where {T}
-    # Build gram = YtY + λI + Σ wᵢ yᵢyᵢᵀ  and  rhs = Σ cᵢ yᵢ
     gram = copy(YtY)
     @inbounds for d in 1:k; gram[d,d] += λ; end
     rhs = zeros(T, k)
@@ -259,12 +270,14 @@ function _nnls_cd!(
 
     # Coordinate descent
     for _ in 1:max_iter
-        prev = copy(x)
+        max_change = zero(T)
         for d in 1:k
             @inbounds numer = rhs[d] - BLAS.dot(k, @view(gram[:,d]), 1, x, 1) + gram[d,d]*x[d]
-            @inbounds x[d] = max(zero(T), numer / gram[d, d])
+            new_val = max(zero(T), numer / gram[d, d])
+            @inbounds max_change = max(max_change, abs(new_val - x[d]))
+            @inbounds x[d] = new_val
         end
-        norm(x .- prev) < T(1e-8) * (norm(x) + T(1e-12)) && break
+        max_change < T(1e-8) && break
     end
 end
 
@@ -283,7 +296,7 @@ function _als_sweep_cg!(
     cg_steps = model.cg_steps
     is_implicit = model.feedback == IMPLICIT
 
-    # Base gram (shared, read-only inside @threads)
+    # Base gram (shared, read-only)
     YtY = Matrix{T}(undef, k, k)
     BLAS.syrk!('U', 'N', one(T), fixed, zero(T), YtY)
     LinearAlgebra.copytri!(YtY, 'U')
@@ -293,7 +306,7 @@ function _als_sweep_cg!(
     rv = rowvals(A)
     nz = nonzeros(A)
 
-    # Pre-allocate per-thread CG workspace buffers.
+    # Per-thread CG workspace
     nt = Threads.maxthreadid()
     max_nnz = maximum(length(nzrange(A, u)) for u in 1:n_entities; init=0)
     rhs_bufs  = [Vector{T}(undef, k)        for _ in 1:nt]
@@ -338,8 +351,8 @@ end
 """
     _cg_solve!(x, base_gram, Y, indices, weights, b, k, max_steps, r, p, Ap)
 
-Solve `(base_gram + Σ_j w_j y_j y_jᵀ) x = b` via CG.
-`x`, `r`, `p`, `Ap` are pre-allocated per-thread buffers — no heap allocation.
+Solve `(base_gram + Σ_j w_j y_j y_jᵀ) x = b` via Conjugate Gradient.
+All vectors are pre-allocated per-thread — zero heap allocation.
 """
 function _cg_solve!(
     x::AbstractVector{T},
@@ -357,7 +370,7 @@ function _cg_solve!(
         r[a] = b[a] - Ap[a]
         p[a] = r[a]
     end
-    rs_old = dot(r, r)   # LinearAlgebra.dot — type-stable, avoids BLAS union split
+    rs_old = dot(r, r)
 
     for _ in 1:max_steps
         _implicit_matvec!(Ap, base_gram, Y, indices, weights, p, k)
@@ -387,22 +400,18 @@ function _implicit_matvec!(
 ) where {T}
     BLAS.gemv!('N', one(T), base_gram, v, zero(T), result)
     n_nz = length(indices)
-    if n_nz == 0
-        return
-    end
-    # For very sparse users (< 32 nnz), avoid BLAS overhead with manual dot+axpy.
-    # At scale (MEGA: 1M×100K, ~10 nnz/user), this eliminates function-call overhead.
+    n_nz == 0 && return
+
+    # For very sparse entities (< 32 nnz), avoid BLAS overhead with manual dot+axpy
     if n_nz < 32
         @inbounds for pos in 1:n_nz
             i = indices[pos]
             w = weights[pos]
             iszero(w) && continue
-            # Manual dot product — avoids BLAS.dot function call overhead for k≤64
             d = zero(T)
             @simd for f in 1:k
                 d += Y[f, i] * v[f]
             end
-            # Manual axpy — avoids BLAS.axpy! overhead
             wd = w * d
             @simd for f in 1:k
                 result[f] += wd * Y[f, i]
@@ -424,8 +433,8 @@ end
 # ──────────────────────────────────────────────────────────────────────────────
 
 function _compute_loss(model::WRMF{T}, X::SparseMatrixCSC) where {T}
-    U = model.user_factors  # k × n_users
-    V = model.item_factors  # k × n_items
+    U = model.user_factors
+    V = model.item_factors
     λ = model.λ
     α = model.α
     k = model.rank
@@ -451,7 +460,6 @@ function _compute_loss(model::WRMF{T}, X::SparseMatrixCSC) where {T}
         end
     end
 
-    # Regularization
     loss += λ * (sum(abs2, U) + sum(abs2, V))
     loss
 end
@@ -460,6 +468,12 @@ end
 # transform / predict
 # ──────────────────────────────────────────────────────────────────────────────
 
+"""
+    transform(model::WRMF, X::SparseMatrixCSC) -> Matrix
+
+Compute user embeddings for new users given their interaction matrix `X` (n_new × n_items).
+Returns a `rank × n_new` factor matrix.
+"""
 function transform(model::WRMF{T}, X::SparseMatrixCSC) where {T}
     model.is_fitted || error("Model not fitted. Call fit! first.")
     n_users_new = size(X, 1)
@@ -468,16 +482,19 @@ function transform(model::WRMF{T}, X::SparseMatrixCSC) where {T}
     fill!(new_user_factors, zero(T))
 
     Xt = SparseMatrixCSC(X')
-    # Use Xt so columns = users, row values = item indices
-    _als_sweep!(model, Xt, new_user_factors, model.item_factors, n_users_new, true)
+    _als_sweep!(model, Xt, new_user_factors, model.item_factors, n_users_new)
     new_user_factors
 end
 
+"""
+    predict(model::WRMF, X::SparseMatrixCSC; k=10) -> Matrix{Int}
+
+Return top-k item indices for each user. Returns `n_users × k` matrix.
+"""
 function predict(model::WRMF{T}, X::SparseMatrixCSC; k::Int = 10) where {T}
     model.is_fitted || error("Model not fitted. Call fit! first.")
     user_emb = transform(model, X)
-    # scores = Uᵀ V  →  n_users × n_items
-    scores = user_emb' * model.item_factors
+    scores = user_emb' * model.item_factors  # n_users × n_items
     n_users = size(scores, 1)
     n_items = size(scores, 2)
     k_actual = min(k, n_items)

@@ -11,12 +11,33 @@
 # where f(x) = (x/x_max)^α if x < x_max, else 1.
 # ──────────────────────────────────────────────────────────────────────────────
 
-using SparseArrays, LinearAlgebra, Random, LoopVectorization, Dates
-
 """
     GloVe{T} <: AbstractMatrixFactorization
 
-GloVe matrix factorization with AdaGrad-based SGD.
+GloVe matrix factorization with AdaGrad-based SGD (Hogwild parallel).
+
+Learns word/item embeddings from a co-occurrence matrix by factorizing
+the log-count matrix with a weighting function that caps frequent pairs.
+
+# Constructor
+```julia
+GloVe(; rank=50, x_max=100.0, learning_rate=0.05, α=0.75, λ=0.0,
+        max_iter=25, convergence_tol=-1.0, shuffle=false, verbose=true)
+```
+
+# Example
+```julia
+using SparseArrays, Gideon
+
+# Co-occurrence matrix (must be square, positive values)
+cooccur = sprand(10000, 10000, 0.001)
+cooccur = cooccur + cooccur'
+nonzeros(cooccur) .= abs.(nonzeros(cooccur)) .+ 0.1
+
+model = GloVe(rank=100, x_max=100.0, learning_rate=0.05, max_iter=25)
+fit!(model, cooccur)
+embeddings = get_embeddings(model)
+```
 """
 mutable struct GloVe{T<:AbstractFloat} <: AbstractMatrixFactorization
     rank::Int
@@ -24,6 +45,8 @@ mutable struct GloVe{T<:AbstractFloat} <: AbstractMatrixFactorization
     learning_rate::T
     α::T
     λ::T
+    max_iter::Int
+    convergence_tol::T
     shuffle::Bool
     verbose::Bool
     # Embeddings (rank × n)
@@ -43,15 +66,20 @@ end
 function GloVe(;
     rank::Int = 50,
     x_max::Float64 = 100.0,
-    learning_rate::Float64 = 0.15,
+    learning_rate::Float64 = 0.05,
     α::Float64 = 0.75,
     λ::Float64 = 0.0,
+    max_iter::Int = 25,
+    convergence_tol::Float64 = -1.0,
     shuffle::Bool = false,
     verbose::Bool = true,
 )
+    @assert rank >= 1 "rank must be ≥ 1"
+    @assert x_max > 0.0 "x_max must be positive"
+    @assert learning_rate > 0.0 "learning_rate must be positive"
     T = Float64
     GloVe{T}(
-        rank, x_max, learning_rate, α, λ, shuffle, verbose,
+        rank, x_max, learning_rate, α, λ, max_iter, convergence_tol, shuffle, verbose,
         Matrix{T}(undef,0,0), Matrix{T}(undef,0,0),
         T[], T[],
         Matrix{T}(undef,0,0), Matrix{T}(undef,0,0),
@@ -61,12 +89,18 @@ function GloVe(;
 end
 
 # ──────────────────────────────────────────────────────────────────────────────
-# fit! — iterative SGD on COO representation of the co-occurrence matrix
+# fit!
 # ──────────────────────────────────────────────────────────────────────────────
 
+"""
+    fit!(model::GloVe, X; n_iter, rng) -> model
+
+Fit GloVe on a square co-occurrence matrix `X` (all values must be positive).
+Uses Hogwild-style parallel SGD with AdaGrad.
+"""
 function fit!(model::GloVe{T}, X::SparseMatrixCSC{Tv,Ti};
-              n_iter::Int = 10,
-              convergence_tol::Float64 = -1.0,
+              n_iter::Int = model.max_iter,
+              convergence_tol::Float64 = model.convergence_tol,
               rng::AbstractRNG = Random.default_rng()) where {T,Tv,Ti}
     n = size(X, 1)
     @assert size(X, 1) == size(X, 2) "GloVe requires a square co-occurrence matrix"
@@ -88,10 +122,11 @@ function fit!(model::GloVe{T}, X::SparseMatrixCSC{Tv,Ti};
     # Extract COO triplets
     rows, cols, vals = findnz(X)
     nnz_count = length(rows)
-    train_start = now()
+
+    monitor = ConvergenceMonitor{T}(tol=T(convergence_tol), min_iter=2)
 
     for iter in 1:n_iter
-        iter_start = now()
+        iter_start = time_ns()
         order = model.shuffle ? randperm(rng, nnz_count) : (1:nnz_count)
         epoch_cost = _glove_epoch!(model, rows, cols, vals, order)
 
@@ -101,19 +136,17 @@ function fit!(model::GloVe{T}, X::SparseMatrixCSC{Tv,Ti};
 
         avg_cost = epoch_cost / nnz_count
         push!(model.cost_history, avg_cost)
-        iter_seconds = Dates.value(now() - iter_start) / 1000.0
-        total_seconds = Dates.value(now() - train_start) / 1000.0
-        if model.verbose
-            @info "GloVe iteration" iter=iter avg_cost=avg_cost iter_seconds=iter_seconds total_seconds=total_seconds
-        end
-        @debug "GloVe iter=$iter  cost=$avg_cost"
+        iter_seconds = (time_ns() - iter_start) / 1e9
+        total_seconds = elapsed_seconds(monitor)
 
-        if iter > 1 && convergence_tol > 0
-            improvement = model.cost_history[iter-1] / model.cost_history[iter] - 1
-            if improvement < convergence_tol
-                @debug "GloVe converged at iter=$iter"
-                break
-            end
+        if model.verbose
+            log_iteration("GloVe", iter, n_iter, Float64(avg_cost),
+                         iter_seconds, total_seconds)
+        end
+
+        if record!(monitor, avg_cost)
+            model.verbose && @info "[GloVe] converged at iteration $iter"
+            break
         end
     end
     model.is_fitted = true
@@ -136,11 +169,11 @@ function _glove_epoch!(model::GloVe{T}, rows, cols, vals, order) where {T}
     gb  = model.grad_b_main
     gbc = model.grad_b_ctx
 
-    # Thread-local cost accumulators — maxthreadid() covers interactive threads.
+    # Thread-local cost accumulators
     nt = Threads.maxthreadid()
     local_costs = zeros(T, nt)
 
-    # Hogwild parallel SGD — benign races on independent rows/cols, same as R rsparse
+    # Hogwild parallel SGD
     Base.Threads.@threads :static for idx in order
         tid  = Threads.threadid()
         i = rows[idx]
@@ -159,8 +192,7 @@ function _glove_epoch!(model::GloVe{T}, rows, cols, vals, order) where {T}
         local_costs[tid] += weight * diff^2
         grad_common = T(2) * weight * diff
 
-        # AdaGrad update — Hogwild writes (no locks)
-        # SIMD-vectorized gradient computation and weight updates
+        # AdaGrad update (Hogwild writes)
         @inbounds @simd for f in 1:k
             g_main = grad_common * Wc[f, j] + λ * W[f, i]
             g_ctx  = grad_common * W[f, i]  + λ * Wc[f, j]
@@ -183,9 +215,9 @@ function _glove_epoch!(model::GloVe{T}, rows, cols, vals, order) where {T}
 end
 
 """
-    get_embeddings(model::GloVe)
+    get_embeddings(model::GloVe) -> Matrix
 
-Return the combined word embeddings `W_main + W_ctx` (each column is an embedding).
+Return the combined word embeddings `W_main + W_ctx` (each column is an embedding vector).
 """
 function get_embeddings(model::GloVe{T}) where {T}
     model.is_fitted || error("Model not fitted")

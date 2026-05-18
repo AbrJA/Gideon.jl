@@ -6,8 +6,6 @@
 #   "Matrix Completion and Low-Rank SVD via Fast Alternating Least Squares"
 # ──────────────────────────────────────────────────────────────────────────────
 
-using SparseArrays, LinearAlgebra, Random, Dates
-
 """
     SoftImputeResult{T}
 
@@ -21,46 +19,53 @@ struct SoftImputeResult{T<:AbstractFloat}
 end
 
 """
-    soft_impute(X; rank, λ, n_iter, convergence_tol, final_svd)
+    soft_impute(X; rank, λ, max_iter, convergence_tol, final_svd, verbose) -> SoftImputeResult
 
 Fit the SoftImpute algorithm on sparse matrix `X`.
-Returns a `SoftImputeResult` with `U`, `d`, `V`.
+
+# Example
+```julia
+using SparseArrays, Gideon
+
+X = sprand(1000, 500, 0.05)
+result = soft_impute(X; rank=20, λ=1.0, max_iter=50)
+reconstruction = result.U * Diagonal(result.d) * result.V'
+```
 """
 function soft_impute(
     X::SparseMatrixCSC{Tv,Ti};
     rank::Int = 10,
     λ::Float64 = 0.0,
-    n_iter::Int = 100,
+    max_iter::Int = 100,
     convergence_tol::Float64 = 1e-3,
     final_svd::Bool = true,
     verbose::Bool = true,
 ) where {Tv,Ti}
-    _soft_als(X; rank, λ, n_iter, convergence_tol, final_svd, target=:soft_impute, verbose)
+    _soft_als(X; rank, λ, max_iter, convergence_tol, final_svd, target=:soft_impute, verbose)
 end
 
 """
-    soft_svd(X; rank, λ, n_iter, convergence_tol, final_svd)
+    soft_svd(X; rank, λ, max_iter, convergence_tol, final_svd, verbose) -> SoftImputeResult
 
-Fit the SoftSVD algorithm on sparse matrix `X`.
-Returns a `SoftImputeResult` with `U`, `d`, `V`.
+Fit the SoftSVD algorithm on sparse matrix `X` (power-iteration style).
 """
 function soft_svd(
     X::SparseMatrixCSC{Tv,Ti};
     rank::Int = 10,
     λ::Float64 = 0.0,
-    n_iter::Int = 100,
+    max_iter::Int = 100,
     convergence_tol::Float64 = 1e-3,
     final_svd::Bool = true,
     verbose::Bool = true,
 ) where {Tv,Ti}
-    _soft_als(X; rank, λ, n_iter, convergence_tol, final_svd, target=:svd, verbose)
+    _soft_als(X; rank, λ, max_iter, convergence_tol, final_svd, target=:svd, verbose)
 end
 
 function _soft_als(
     X::SparseMatrixCSC{Tv,Ti};
     rank::Int,
     λ::Float64,
-    n_iter::Int,
+    max_iter::Int,
     convergence_tol::Float64,
     final_svd::Bool,
     target::Symbol,
@@ -72,36 +77,31 @@ function _soft_als(
 
     # Initialize with random orthonormal bases
     Q_u, _ = qr(randn(T, m, k))
-    U_cur = Matrix(Q_u)[:, 1:k]   # m × k
+    U_cur = Matrix(Q_u)[:, 1:k]
     Q_v, _ = qr(randn(T, n, k))
-    V_cur = Matrix(Q_v)[:, 1:k]   # n × k
+    V_cur = Matrix(Q_v)[:, 1:k]
     d_cur = ones(T, k)
 
-    prev_frob = T(Inf)
-    train_start = now()
+    monitor = ConvergenceMonitor{T}(tol=T(convergence_tol), min_iter=2)
 
-    for iter in 1:n_iter
-        iter_start = now()
+    for iter in 1:max_iter
+        iter_start = time_ns()
+
         if target == :svd
-            # SoftSVD: simple alternating power iteration
-            # Step 1: B = X * V_cur  (m × k)
             B = X * V_cur
             F_b = svd(B)
             kk = min(k, length(F_b.S))
             U_cur = F_b.U[:, 1:kk]
             d_cur = _soft_threshold.(F_b.S[1:kk], T(λ))
 
-            # Step 2: A = X' * U_cur  (n × k)
             A = X' * U_cur
             F_a = svd(A)
             kk2 = min(k, length(F_a.S))
-            V_cur = F_a.U[:, 1:kk2]   # n × kk2
+            V_cur = F_a.U[:, 1:kk2]
             d_cur = _soft_threshold.(F_a.S[1:kk2], T(λ))
-            U_cur = U_cur[:, 1:kk2]   # ensure consistent dimensions
+            U_cur = U_cur[:, 1:kk2]
         else
             # SoftImpute: correct for observed entries
-            # B = X * V_cur + U_cur * diag(d) - P_Ω(U_cur * diag(d) * V_cur') * V_cur
-            # Simplified: compute correction only at non-zero positions
             UdVt_vals = _sparse_approx_values(X, U_cur .* d_cur', V_cur)
             X_corrected = copy(X)
             nonzeros(X_corrected) .= nonzeros(X) .- Tv.(UdVt_vals)
@@ -112,7 +112,6 @@ function _soft_als(
             U_cur = F_b.U[:, 1:kk]
             d_cur = _soft_threshold.(F_b.S[1:kk], T(λ))
 
-            # Repeat for V side
             UdVt_vals2 = _sparse_approx_values(X, U_cur .* d_cur', V_cur[:, 1:kk])
             X_corrected2 = copy(X)
             nonzeros(X_corrected2) .= nonzeros(X) .- Tv.(UdVt_vals2)
@@ -126,21 +125,19 @@ function _soft_als(
         end
 
         cur_frob = sum(abs2, d_cur)
-        iter_seconds = Dates.value(now() - iter_start) / 1000.0
-        total_seconds = Dates.value(now() - train_start) / 1000.0
-        if verbose
-            @info "SoftImpute iteration" iter=iter frob=cur_frob iter_seconds=iter_seconds total_seconds=total_seconds target=target
-        end
-        @debug "SoftImpute iter=$iter  frob=$cur_frob"
+        iter_seconds = (time_ns() - iter_start) / 1e9
+        total_seconds = elapsed_seconds(monitor)
 
-        if iter > 1
-            rel_change = abs(prev_frob - cur_frob) / (abs(prev_frob) + T(1e-12))
-            if rel_change < convergence_tol
-                @debug "SoftImpute converged at iter=$iter"
-                break
-            end
+        if verbose
+            log_iteration("SoftImpute", iter, max_iter, cur_frob,
+                         iter_seconds, total_seconds;
+                         extra="target=$target")
         end
-        prev_frob = cur_frob
+
+        if record!(monitor, T(cur_frob))
+            verbose && @info "[SoftImpute] converged at iteration $iter"
+            break
+        end
     end
 
     if final_svd
@@ -162,7 +159,6 @@ end
     _sparse_approx_values(X, A, B)
 
 Compute the values of `A * B'` at the non-zero positions of sparse matrix `X`.
-`A` is `m × k` and `B` is `n × k`. Returns a vector aligned with `nonzeros(X)`.
 """
 function _sparse_approx_values(X::SparseMatrixCSC{Tv,Ti}, A::Matrix{T}, B::Matrix{T}) where {Tv,Ti,T}
     k = size(A, 2)

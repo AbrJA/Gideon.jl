@@ -2,8 +2,6 @@
 # Sparse matrix utilities — CSC / CSR helpers
 # ──────────────────────────────────────────────────────────────────────────────
 
-using SparseArrays, SparseMatricesCSR, LinearAlgebra
-
 """
     to_csr(A::SparseMatrixCSC{Tv,Ti}) where {Tv,Ti}
 

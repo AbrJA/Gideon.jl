@@ -1,13 +1,11 @@
 # ──────────────────────────────────────────────────────────────────────────────
-# Ranking evaluation metrics — MAP@K, NDCG@K, Precision@K
+# Ranking evaluation metrics — MAP@K, NDCG@K, Precision@K, Recall@K
 # ──────────────────────────────────────────────────────────────────────────────
 #
 # All metrics follow the convention:
 #   predictions : Matrix{Int} of shape (n_users, K)  — predicted item indices
 #   actual      : SparseMatrixCSC (n_users × n_items) — non-zero = relevant
 # ──────────────────────────────────────────────────────────────────────────────
-
-using SparseArrays
 
 # ──────────────── Average Precision @ K ────────────────
 

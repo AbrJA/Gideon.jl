@@ -4,13 +4,14 @@ using LinearAlgebra
 using SparseArrays
 using SparseMatricesCSR
 using Random
-using StaticArrays
-using LoopVectorization
+using Logging
+using Printf
 
 # ── Core types & API ──
 include("types.jl")
 include("utils.jl")
 include("sparse_utils.jl")
+include("progress.jl")
 
 # ── Algorithms ──
 include("algorithms/wrmf.jl")
@@ -31,6 +32,7 @@ export
     AbstractSparseRegression,
     ALSSolver, CHOLESKY, CONJUGATE_GRADIENT, NNLS,
     FeedbackType, IMPLICIT, EXPLICIT,
+    Family, BINOMIAL, GAUSSIAN, POISSON,
 
     # Models
     WRMF,
