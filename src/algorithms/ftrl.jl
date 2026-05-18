@@ -9,7 +9,7 @@
 # adaptive learning rates.
 # ──────────────────────────────────────────────────────────────────────────────
 
-using SparseArrays, LinearAlgebra, Random
+using SparseArrays, LinearAlgebra, Random, Dates
 
 """
     FTRL{T} <: AbstractSparseRegression
@@ -32,6 +32,7 @@ mutable struct FTRL{T<:AbstractFloat} <: AbstractSparseRegression
     λ::T
     l1_ratio::T
     dropout::T
+    verbose::Bool
     n_features::Int
     z::Vector{T}
     n::Vector{T}
@@ -44,13 +45,14 @@ function FTRL(;
     λ::Float64 = 0.0,
     l1_ratio::Float64 = 1.0,
     dropout::Float64 = 0.0,
+    verbose::Bool = true,
 )
     @assert 0.0 <= dropout < 1.0
     @assert 0.0 <= l1_ratio <= 1.0
     @assert λ >= 0.0
     @assert learning_rate > 0.0
     @assert learning_rate_decay > 0.0
-    FTRL{Float64}(learning_rate, learning_rate_decay, λ, l1_ratio, dropout,
+    FTRL{Float64}(learning_rate, learning_rate_decay, λ, l1_ratio, dropout, verbose,
                   0, Float64[], Float64[], false)
 end
 
@@ -61,6 +63,7 @@ end
 function partial_fit!(model::FTRL{T}, X::SparseMatrixCSC{Tv,Ti}, y::AbstractVector;
                       weights::AbstractVector{T} = ones(T, length(y)),
                       rng::AbstractRNG = Random.default_rng()) where {T,Tv,Ti}
+    pass_start = now()
     n_samples, n_features = size(X)
     @assert n_samples == length(y) "X rows ($(n_samples)) ≠ length(y) ($(length(y)))"
     @assert !any(isnan, nonzeros(X)) "NaN values in input matrix"
@@ -115,14 +118,25 @@ function partial_fit!(model::FTRL{T}, X::SparseMatrixCSC{Tv,Ti}, y::AbstractVect
             n_acc[j] += gj^2
         end
     end
+    pass_seconds = Dates.value(now() - pass_start) / 1000.0
+    if model.verbose
+        @info "FTRL partial_fit pass" n_samples=n_samples n_features=n_features pass_seconds=pass_seconds
+    end
     model
 end
 
 function fit!(model::FTRL{T}, X::SparseMatrixCSC, y::AbstractVector;
               n_iter::Int = 1, kwargs...) where {T}
+    train_start = now()
     for i in 1:n_iter
+        epoch_start = now()
         @debug "FTRL epoch $i"
         partial_fit!(model, X, y; kwargs...)
+        epoch_seconds = Dates.value(now() - epoch_start) / 1000.0
+        total_seconds = Dates.value(now() - train_start) / 1000.0
+        if model.verbose
+            @info "FTRL epoch" iter=i epoch_seconds=epoch_seconds total_seconds=total_seconds
+        end
     end
     model
 end

@@ -9,7 +9,7 @@
 #   ŷ(x) = w₀ + Σ_j wⱼ xⱼ + ½ Σ_{f=1}^{k} [ (Σ_j v_{j,f} xⱼ)² - Σ_j v²_{j,f} x²ⱼ ]
 # ──────────────────────────────────────────────────────────────────────────────
 
-using SparseArrays, LinearAlgebra, Random
+using SparseArrays, LinearAlgebra, Random, Dates
 
 """
     FactorizationMachine{T} <: AbstractSparseRegression
@@ -24,6 +24,7 @@ mutable struct FactorizationMachine{T<:AbstractFloat} <: AbstractSparseRegressio
     λ_v::T
     family::Symbol          # :binomial or :gaussian
     intercept::Bool
+    verbose::Bool
     n_features::Int
     w0::T
     w::Vector{T}
@@ -41,11 +42,12 @@ function FactorizationMachine(;
     λ_v::Float64 = 0.0,
     family::Symbol = :binomial,
     intercept::Bool = true,
+    verbose::Bool = true,
 )
     @assert family in (:binomial, :gaussian)
     @assert rank >= 1
     FactorizationMachine{Float64}(
-        rank, learning_rate_w, learning_rate_v, λ_w, λ_v, family, intercept,
+        rank, learning_rate_w, learning_rate_v, λ_w, λ_v, family, intercept, verbose,
         0, 0.0, Float64[], Matrix{Float64}(undef,0,0),
         Float64[], Matrix{Float64}(undef,0,0), false,
     )
@@ -59,6 +61,7 @@ function partial_fit!(model::FactorizationMachine{T}, X::SparseMatrixCSC{Tv,Ti},
                       y::AbstractVector;
                       weights::AbstractVector{T} = ones(T, length(y)),
                       rng::AbstractRNG = Random.default_rng()) where {T,Tv,Ti}
+    pass_start = now()
     n_samples, n_features = size(X)
     @assert n_samples == length(y)
 
@@ -144,14 +147,25 @@ function partial_fit!(model::FactorizationMachine{T}, X::SparseMatrixCSC{Tv,Ti},
             end
         end
     end
+    pass_seconds = Dates.value(now() - pass_start) / 1000.0
+    if model.verbose
+        @info "FM partial_fit pass" n_samples=n_samples n_features=n_features pass_seconds=pass_seconds
+    end
     model
 end
 
 function fit!(model::FactorizationMachine{T}, X::SparseMatrixCSC, y::AbstractVector;
               n_iter::Int = 1, kwargs...) where {T}
+    train_start = now()
     for i in 1:n_iter
+        epoch_start = now()
         @debug "FM epoch $i"
         partial_fit!(model, X, y; kwargs...)
+        epoch_seconds = Dates.value(now() - epoch_start) / 1000.0
+        total_seconds = Dates.value(now() - train_start) / 1000.0
+        if model.verbose
+            @info "FM epoch" iter=i epoch_seconds=epoch_seconds total_seconds=total_seconds
+        end
     end
     model
 end

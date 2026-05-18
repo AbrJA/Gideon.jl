@@ -10,7 +10,7 @@
 #       - λ/2 (||X||² + ||Y||²)
 # ──────────────────────────────────────────────────────────────────────────────
 
-using SparseArrays, LinearAlgebra, Random, LoopVectorization
+using SparseArrays, LinearAlgebra, Random, LoopVectorization, Dates
 
 """
     LMF{T} <: AbstractMatrixFactorization
@@ -24,6 +24,7 @@ mutable struct LMF{T<:AbstractFloat} <: AbstractMatrixFactorization
     learning_rate::T
     max_iter::Int
     n_negative::Int  # negative samples per positive
+    verbose::Bool
     user_factors::Matrix{T}
     item_factors::Matrix{T}
     is_fitted::Bool
@@ -36,8 +37,9 @@ function LMF(;
     learning_rate::Float64 = 0.01,
     max_iter::Int = 10,
     n_negative::Int = 4,
+    verbose::Bool = true,
 )
-    LMF{Float64}(rank, λ, α, learning_rate, max_iter, n_negative,
+    LMF{Float64}(rank, λ, α, learning_rate, max_iter, n_negative, verbose,
                  Matrix{Float64}(undef,0,0), Matrix{Float64}(undef,0,0), false)
 end
 
@@ -51,8 +53,10 @@ function fit!(model::LMF{T}, X::SparseMatrixCSC{Tv,Ti};
 
     rv = rowvals(X)
     nz = nonzeros(X)
+    train_start = now()
 
     for iter in 1:model.max_iter
+        iter_start = now()
         total_loss = zero(T)
 
         for j in axes(X, 2)  # iterate items (columns)
@@ -112,6 +116,11 @@ function fit!(model::LMF{T}, X::SparseMatrixCSC{Tv,Ti};
 
         # Regularization
         total_loss -= model.λ / 2 * (sum(abs2, model.user_factors) + sum(abs2, model.item_factors))
+        iter_seconds = Dates.value(now() - iter_start) / 1000.0
+        total_seconds = Dates.value(now() - train_start) / 1000.0
+        if model.verbose
+            @info "LMF iteration" iter=iter loss=total_loss iter_seconds=iter_seconds total_seconds=total_seconds
+        end
         @debug "LMF iter=$iter  loss=$total_loss"
     end
     model.is_fitted = true

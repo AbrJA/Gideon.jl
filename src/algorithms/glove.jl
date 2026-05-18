@@ -11,7 +11,7 @@
 # where f(x) = (x/x_max)^α if x < x_max, else 1.
 # ──────────────────────────────────────────────────────────────────────────────
 
-using SparseArrays, LinearAlgebra, Random, LoopVectorization
+using SparseArrays, LinearAlgebra, Random, LoopVectorization, Dates
 
 """
     GloVe{T} <: AbstractMatrixFactorization
@@ -25,6 +25,7 @@ mutable struct GloVe{T<:AbstractFloat} <: AbstractMatrixFactorization
     α::T
     λ::T
     shuffle::Bool
+    verbose::Bool
     # Embeddings (rank × n)
     W_main::Matrix{T}
     W_ctx::Matrix{T}
@@ -46,10 +47,11 @@ function GloVe(;
     α::Float64 = 0.75,
     λ::Float64 = 0.0,
     shuffle::Bool = false,
+    verbose::Bool = true,
 )
     T = Float64
     GloVe{T}(
-        rank, x_max, learning_rate, α, λ, shuffle,
+        rank, x_max, learning_rate, α, λ, shuffle, verbose,
         Matrix{T}(undef,0,0), Matrix{T}(undef,0,0),
         T[], T[],
         Matrix{T}(undef,0,0), Matrix{T}(undef,0,0),
@@ -86,8 +88,10 @@ function fit!(model::GloVe{T}, X::SparseMatrixCSC{Tv,Ti};
     # Extract COO triplets
     rows, cols, vals = findnz(X)
     nnz_count = length(rows)
+    train_start = now()
 
     for iter in 1:n_iter
+        iter_start = now()
         order = model.shuffle ? randperm(rng, nnz_count) : (1:nnz_count)
         epoch_cost = _glove_epoch!(model, rows, cols, vals, order)
 
@@ -97,6 +101,11 @@ function fit!(model::GloVe{T}, X::SparseMatrixCSC{Tv,Ti};
 
         avg_cost = epoch_cost / nnz_count
         push!(model.cost_history, avg_cost)
+        iter_seconds = Dates.value(now() - iter_start) / 1000.0
+        total_seconds = Dates.value(now() - train_start) / 1000.0
+        if model.verbose
+            @info "GloVe iteration" iter=iter avg_cost=avg_cost iter_seconds=iter_seconds total_seconds=total_seconds
+        end
         @debug "GloVe iter=$iter  cost=$avg_cost"
 
         if iter > 1 && convergence_tol > 0

@@ -20,7 +20,7 @@
 #   • Base.Threads.@threads :static for stable thread IDs
 # ──────────────────────────────────────────────────────────────────────────────
 
-using LinearAlgebra, SparseArrays, Random, LoopVectorization
+using LinearAlgebra, SparseArrays, Random, LoopVectorization, Dates
 
 """
     WRMF{T} <: AbstractMatrixFactorization
@@ -49,6 +49,7 @@ mutable struct WRMF{T<:AbstractFloat} <: AbstractMatrixFactorization
     solver::ALSSolver
     cg_steps::Int
     feedback::FeedbackType
+    verbose::Bool
     user_factors::Matrix{T}
     item_factors::Matrix{T}
     user_bias::Vector{T}
@@ -65,9 +66,10 @@ function WRMF(;
     solver::ALSSolver = CONJUGATE_GRADIENT,
     cg_steps::Int = 3,
     feedback::FeedbackType = IMPLICIT,
+    verbose::Bool = true,
 )
     WRMF{Float64}(
-        rank, λ, α, max_iter, solver, cg_steps, feedback,
+        rank, λ, α, max_iter, solver, cg_steps, feedback, verbose,
         Matrix{Float64}(undef, 0, 0),   # user_factors placeholder
         Matrix{Float64}(undef, 0, 0),   # item_factors placeholder
         Float64[], Float64[], 0.0, false,
@@ -97,8 +99,10 @@ function fit!(model::WRMF{T}, X::SparseMatrixCSC{Tv,Ti};
     Xt = SparseMatrixCSC(X')  # n_items × n_users
 
     prev_loss = T(Inf)
+    train_start = now()
 
     for iter in 1:model.max_iter
+        iter_start = now()
         # ---- Update user factors (fixing items) ----
         # Xt columns = users, row values = item indices → indexes into item_factors
         _als_sweep!(model, Xt, model.user_factors, model.item_factors, n_users, true)
@@ -108,6 +112,11 @@ function fit!(model::WRMF{T}, X::SparseMatrixCSC{Tv,Ti};
         _als_sweep!(model, X, model.item_factors, model.user_factors, n_items, false)
 
         loss = _compute_loss(model, X)
+        iter_seconds = Dates.value(now() - iter_start) / 1000.0
+        total_seconds = Dates.value(now() - train_start) / 1000.0
+        if model.verbose
+            @info "WRMF iteration" iter=iter loss=loss iter_seconds=iter_seconds total_seconds=total_seconds
+        end
         @debug "WRMF iter=$iter  loss=$loss"
 
         if iter > 1 && abs(prev_loss - loss) / (abs(prev_loss) + T(1e-12)) < convergence_tol

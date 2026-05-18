@@ -6,7 +6,7 @@
 #   "Matrix Completion and Low-Rank SVD via Fast Alternating Least Squares"
 # ──────────────────────────────────────────────────────────────────────────────
 
-using SparseArrays, LinearAlgebra, Random
+using SparseArrays, LinearAlgebra, Random, Dates
 
 """
     SoftImputeResult{T}
@@ -33,8 +33,9 @@ function soft_impute(
     n_iter::Int = 100,
     convergence_tol::Float64 = 1e-3,
     final_svd::Bool = true,
+    verbose::Bool = true,
 ) where {Tv,Ti}
-    _soft_als(X; rank, λ, n_iter, convergence_tol, final_svd, target=:soft_impute)
+    _soft_als(X; rank, λ, n_iter, convergence_tol, final_svd, target=:soft_impute, verbose)
 end
 
 """
@@ -50,8 +51,9 @@ function soft_svd(
     n_iter::Int = 100,
     convergence_tol::Float64 = 1e-3,
     final_svd::Bool = true,
+    verbose::Bool = true,
 ) where {Tv,Ti}
-    _soft_als(X; rank, λ, n_iter, convergence_tol, final_svd, target=:svd)
+    _soft_als(X; rank, λ, n_iter, convergence_tol, final_svd, target=:svd, verbose)
 end
 
 function _soft_als(
@@ -62,6 +64,7 @@ function _soft_als(
     convergence_tol::Float64,
     final_svd::Bool,
     target::Symbol,
+    verbose::Bool,
 ) where {Tv,Ti}
     T = Float64
     m, n = size(X)
@@ -75,8 +78,10 @@ function _soft_als(
     d_cur = ones(T, k)
 
     prev_frob = T(Inf)
+    train_start = now()
 
     for iter in 1:n_iter
+        iter_start = now()
         if target == :svd
             # SoftSVD: simple alternating power iteration
             # Step 1: B = X * V_cur  (m × k)
@@ -121,6 +126,11 @@ function _soft_als(
         end
 
         cur_frob = sum(abs2, d_cur)
+        iter_seconds = Dates.value(now() - iter_start) / 1000.0
+        total_seconds = Dates.value(now() - train_start) / 1000.0
+        if verbose
+            @info "SoftImpute iteration" iter=iter frob=cur_frob iter_seconds=iter_seconds total_seconds=total_seconds target=target
+        end
         @debug "SoftImpute iter=$iter  frob=$cur_frob"
 
         if iter > 1
