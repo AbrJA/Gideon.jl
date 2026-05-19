@@ -6,23 +6,31 @@ using SparseMatricesCSR
 using Random
 using Logging
 using Printf
+using Serialization
 
 # ── Core types & API ──
 include("types.jl")
 include("utils.jl")
 include("sparse_utils.jl")
 include("progress.jl")
+include("callbacks.jl")
+include("serialization.jl")
 
 # ── Algorithms ──
 include("algorithms/wrmf.jl")
+include("algorithms/ials.jl")
 include("algorithms/ftrl.jl")
 include("algorithms/fm.jl")
 include("algorithms/glove.jl")
 include("algorithms/lmf.jl")
+include("algorithms/bpr.jl")
+include("algorithms/ease.jl")
+include("algorithms/slim.jl")
 include("algorithms/soft_impute.jl")
 
-# ── Metrics ──
+# ── Metrics & evaluation ──
 include("metrics/ranking.jl")
+include("crossval.jl")
 
 # ── Public API ──
 export
@@ -36,16 +44,21 @@ export
 
     # Models
     WRMF,
+    IALS,
     FTRL,
     FactorizationMachine,
     GloVe,
     LMF,
+    BPR,
+    EASE,
+    SLIM,
     SoftImputeResult,
 
     # Generic API
     fit!,
     transform,
     predict,
+    predict_scores,
     partial_fit!,
     coef,
 
@@ -61,6 +74,26 @@ export
     precision_at_k,
     recall_at_k,
 
+    # Cross-validation & search
+    temporal_split,
+    cv_evaluate,
+    grid_search,
+    random_search,
+
+    # Callbacks
+    AbstractCallback,
+    CallbackInfo,
+    on_epoch_end,
+    EarlyStoppingCallback,
+    LossHistoryCallback,
+    CheckpointCallback,
+    LearningRateScheduler,
+    run_callbacks,
+
+    # Serialization
+    save_model,
+    load_model,
+
     # Sparse utilities
     to_csr,
     sparse_row_norms,
@@ -71,5 +104,12 @@ export
     # Helpers
     sigmoid,
     init_factors
+
+# ── GPU stubs (implemented by ext/GideonCUDAExt.jl when CUDA is loaded) ──
+function fit_gpu! end
+function predict_gpu end
+function predict_scores_gpu end
+
+export fit_gpu!, predict_gpu, predict_scores_gpu
 
 end # module Gideon

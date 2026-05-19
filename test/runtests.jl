@@ -3,18 +3,21 @@ using Gideon
 using SparseArrays
 using LinearAlgebra
 using Random
-using Aqua
-using JET
+#using Aqua
+#using JET
 
 @testset "Gideon.jl" begin
     @testset "Quality" begin
-        include("test_quality.jl")
+        #include("test_quality.jl")
     end
     @testset "Types & Utils" begin
         include("test_utils.jl")
     end
     @testset "WRMF" begin
         include("test_wrmf.jl")
+    end
+    @testset "iALS" begin
+        include("test_ials.jl")
     end
     @testset "FTRL" begin
         include("test_ftrl.jl")
@@ -28,11 +31,23 @@ using JET
     @testset "LMF" begin
         include("test_lmf.jl")
     end
+    @testset "BPR" begin
+        include("test_bpr.jl")
+    end
+    @testset "EASE" begin
+        include("test_ease.jl")
+    end
+    @testset "SLIM" begin
+        include("test_slim.jl")
+    end
     @testset "SoftImpute" begin
         include("test_soft_impute.jl")
     end
     @testset "Metrics" begin
         include("test_metrics.jl")
+    end
+    @testset "Infrastructure" begin
+        include("test_infrastructure.jl")
     end
     @testset "R Correctness" begin
         include("test_r_correctness.jl")

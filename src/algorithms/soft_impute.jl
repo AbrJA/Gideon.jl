@@ -153,8 +153,6 @@ function _soft_als(
     SoftImputeResult{T}(U_cur, d_cur, V_cur)
 end
 
-@inline _soft_threshold(x::T, λ::T) where {T} = max(x - λ, zero(T))
-
 """
     _sparse_approx_values(X, A, B)
 

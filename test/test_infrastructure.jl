@@ -1,0 +1,147 @@
+# test/test_infrastructure.jl — Callbacks, Serialization, Cross-validation
+
+@testset "Callbacks" begin
+    @testset "EarlyStoppingCallback" begin
+        cb = EarlyStoppingCallback(patience=3, min_delta=0.01)
+        model = IALS(rank=3, verbose=false)
+
+        # Improving losses
+        for loss in [1.0, 0.9, 0.8, 0.7]
+            info = Gideon.CallbackInfo(1, loss, 0.0, model)
+            @test on_epoch_end(cb, info) == :continue
+        end
+
+        # Stagnating losses → should stop after patience
+        for i in 1:3
+            info = Gideon.CallbackInfo(i, 0.7, 0.0, model)
+            result = on_epoch_end(cb, info)
+            if i < 3
+                @test result == :continue
+            else
+                @test result == :stop
+            end
+        end
+    end
+
+    @testset "LossHistoryCallback" begin
+        cb = LossHistoryCallback()
+        model = IALS(rank=3, verbose=false)
+        for i in 1:5
+            info = Gideon.CallbackInfo(i, Float64(i) * 0.1, 0.0, model)
+            @test on_epoch_end(cb, info) == :continue
+        end
+        @test length(cb.losses) == 5
+        @test cb.losses[1] ≈ 0.1
+    end
+
+    @testset "LearningRateScheduler" begin
+        cb = LearningRateScheduler(decay=0.5, min_lr=0.001)
+        model = BPR(rank=3, learning_rate=1.0, verbose=false)
+        info = Gideon.CallbackInfo(1, 0.5, 0.0, model)
+        on_epoch_end(cb, info)
+        @test model.learning_rate ≈ 0.5
+        on_epoch_end(cb, info)
+        @test model.learning_rate ≈ 0.25
+    end
+
+    @testset "run_callbacks" begin
+        cb1 = LossHistoryCallback()
+        cb2 = EarlyStoppingCallback(patience=1, min_delta=0.0)
+        model = IALS(rank=3, verbose=false)
+
+        # First call - improving
+        info1 = Gideon.CallbackInfo(1, 1.0, 0.0, model)
+        @test run_callbacks([cb1, cb2], info1) == false
+
+        # Second call - stagnant
+        info2 = Gideon.CallbackInfo(2, 1.0, 1.0, model)
+        @test run_callbacks([cb1, cb2], info2) == true
+    end
+end
+
+@testset "Serialization" begin
+    rng = MersenneTwister(42)
+    X = sprand(rng, 30, 20, 0.1)
+    model = EASE(λ=100.0, verbose=false)
+    fit!(model, X)
+
+    # Save and load
+    tmpfile = tempname() * ".jls"
+    try
+        save_model(model, tmpfile)
+        @test isfile(tmpfile)
+
+        loaded = load_model(tmpfile)
+        @test loaded isa EASE
+        @test loaded.is_fitted
+        @test loaded.B ≈ model.B
+        @test loaded.λ ≈ model.λ
+    finally
+        rm(tmpfile; force=true)
+    end
+end
+
+@testset "Cross-validation" begin
+    @testset "temporal_split" begin
+        rng = MersenneTwister(42)
+        X = sprand(rng, 50, 30, 0.2)
+        X_train, X_test = temporal_split(X; test_fraction=0.2, rng=MersenneTwister(1))
+
+        # Sizes match
+        @test size(X_train) == size(X)
+        @test size(X_test) == size(X)
+
+        # No overlap: train and test shouldn't share entries
+        overlap = X_train .* X_test
+        @test nnz(overlap) == 0
+
+        # Union roughly equals original
+        @test nnz(X_train) + nnz(X_test) == nnz(X)
+    end
+
+    @testset "cv_evaluate" begin
+        rng = MersenneTwister(42)
+        X = sprand(rng, 50, 30, 0.15)
+
+        mean_score, std_score, fold_scores = cv_evaluate(
+            () -> EASE(λ=200.0, verbose=false),
+            X; n_folds=3, k=5, metric=map_at_k, rng=MersenneTwister(1)
+        )
+
+        @test length(fold_scores) == 3
+        @test all(s -> 0.0 <= s <= 1.0, fold_scores)
+        @test mean_score ≈ sum(fold_scores) / 3
+        @test std_score >= 0.0
+    end
+
+    @testset "grid_search" begin
+        rng = MersenneTwister(42)
+        X = sprand(rng, 50, 30, 0.15)
+
+        best_params, best_score, results = grid_search(
+            p -> EASE(λ=p.λ, verbose=false),
+            X,
+            Dict(:λ => [100.0, 500.0]);
+            k=5, test_fraction=0.3, verbose=false, rng=MersenneTwister(1)
+        )
+
+        @test length(results) == 2
+        @test haskey(best_params, :λ)
+        @test best_score >= 0.0
+    end
+
+    @testset "random_search" begin
+        rng = MersenneTwister(42)
+        X = sprand(rng, 50, 30, 0.15)
+
+        best_params, best_score, results = random_search(
+            p -> EASE(λ=p.λ, verbose=false),
+            X,
+            Dict(:λ => r -> 10.0^(rand(r) * 3));
+            n_trials=3, k=5, test_fraction=0.3, verbose=false, rng=MersenneTwister(1)
+        )
+
+        @test length(results) == 3
+        @test best_score >= 0.0
+    end
+end
