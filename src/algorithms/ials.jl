@@ -75,14 +75,15 @@ function IALS(;
     solver::Symbol = :cholesky,
     cg_steps::Int = 3,
     verbose::Bool = true,
+    dtype::Type{<:AbstractFloat} = Float32,
 )
     @assert rank >= 1
     @assert λ >= 0.0
     @assert α >= 0.0
     @assert solver in (:cholesky, :cg)
     @assert cg_steps >= 1
-    T = Float64
-    IALS{T}(rank, λ, α, max_iter, convergence_tol, solver, cg_steps, verbose,
+    T = dtype
+    IALS{T}(rank, T(λ), T(α), max_iter, T(convergence_tol), solver, cg_steps, verbose,
             Matrix{T}(undef,0,0), Matrix{T}(undef,0,0), false)
 end
 
@@ -100,8 +101,8 @@ per iteration, then adds per-user diagonal corrections from non-zero entries.
 """
 function fit!(model::IALS{T}, X::SparseMatrixCSC{Tv,Ti};
               rng::AbstractRNG = Random.default_rng(),
-              U_init::Union{Nothing,Matrix{T}} = nothing,
-              V_init::Union{Nothing,Matrix{T}} = nothing) where {T,Tv,Ti}
+              U_init::Union{Nothing,AbstractMatrix} = nothing,
+              V_init::Union{Nothing,AbstractMatrix} = nothing) where {T,Tv,Ti}
     n_users, n_items = size(X)
     k = model.rank
     α = model.α
@@ -109,12 +110,12 @@ function fit!(model::IALS{T}, X::SparseMatrixCSC{Tv,Ti};
 
     # Initialize factors
     if U_init !== nothing
-        model.user_factors = copy(U_init)
+        model.user_factors = Matrix{T}(U_init)
     else
         model.user_factors = randn(rng, T, k, n_users) .* T(0.01)
     end
     if V_init !== nothing
-        model.item_factors = copy(V_init)
+        model.item_factors = Matrix{T}(V_init)
     else
         model.item_factors = randn(rng, T, k, n_items) .* T(0.01)
     end
@@ -136,6 +137,10 @@ function fit!(model::IALS{T}, X::SparseMatrixCSC{Tv,Ti};
     r_bufs = [Vector{T}(undef, k) for _ in 1:nt]
     p_bufs = [Vector{T}(undef, k) for _ in 1:nt]
     Ap_bufs = [Vector{T}(undef, k) for _ in 1:nt]
+    # Batched gather buffers: Z (k × max_nnz_per_entity), w (max_nnz_per_entity)
+    max_nnz = max(maximum(diff(X.colptr)), maximum(diff(X_csr.rowptr)))
+    Z_bufs = [Matrix{T}(undef, k, max_nnz) for _ in 1:nt]
+    w_bufs = [Vector{T}(undef, max_nnz) for _ in 1:nt]
 
     use_cg = model.solver == :cg
     cg_steps = model.cg_steps
@@ -146,17 +151,21 @@ function fit!(model::IALS{T}, X::SparseMatrixCSC{Tv,Ti};
         # ── Update users: fix V, solve for U ──
         if use_cg
             _ials_update_factors_cg!(U, V, X_csr, α, λ, k, cg_steps,
-                                     A_bufs, b_bufs, r_bufs, p_bufs, Ap_bufs)
+                                     A_bufs, b_bufs, r_bufs, p_bufs, Ap_bufs,
+                                     Z_bufs, w_bufs)
         else
-            _ials_update_factors!(U, V, X_csr, α, λ, k, A_bufs, b_bufs)
+            _ials_update_factors!(U, V, X_csr, α, λ, k, A_bufs, b_bufs,
+                                  Z_bufs, w_bufs)
         end
 
         # ── Update items: fix U, solve for V ──
         if use_cg
             _ials_update_factors_cg!(V, U, X, α, λ, k, cg_steps,
-                                     A_bufs, b_bufs, r_bufs, p_bufs, Ap_bufs)
+                                     A_bufs, b_bufs, r_bufs, p_bufs, Ap_bufs,
+                                     Z_bufs, w_bufs)
         else
-            _ials_update_factors!(V, U, X, α, λ, k, A_bufs, b_bufs)
+            _ials_update_factors!(V, U, X, α, λ, k, A_bufs, b_bufs,
+                                  Z_bufs, w_bufs)
         end
 
         # ── Compute loss ──
@@ -183,71 +192,121 @@ end
 """
 Update all factors in `target` given fixed `source` factors and sparse matrix `R`.
 Dispatches on CSR (row access for user updates) or CSC (column access for item updates).
+
+Uses batched BLAS: gathers item vectors per entity, then single syrk! + gemv! calls
+instead of per-item syr! + axpy! (reduces BLAS call count by ~100x).
 """
 function _ials_update_factors!(target::Matrix{T}, source::Matrix{T},
                                R::SparseMatricesCSR.SparseMatrixCSR, α::T, λ::T, k::Int,
                                A_bufs::Vector{Matrix{T}},
-                               b_bufs::Vector{Vector{T}}) where {T}
-    _ials_update_core!(target, source, R, α, λ, k, A_bufs, b_bufs,
-                       u -> nzrange(R, u),
-                       idx -> Int(R.colval[idx]),
-                       idx -> T(R.nzval[idx]))
-end
-
-function _ials_update_factors!(target::Matrix{T}, source::Matrix{T},
-                               R::SparseMatrixCSC, α::T, λ::T, k::Int,
-                               A_bufs::Vector{Matrix{T}},
-                               b_bufs::Vector{Vector{T}}) where {T}
-    _ials_update_core!(target, source, R, α, λ, k, A_bufs, b_bufs,
-                       j -> nzrange(R, j),
-                       idx -> Int(rowvals(R)[idx]),
-                       idx -> T(nonzeros(R)[idx]))
-end
-
-function _ials_update_core!(target::Matrix{T}, source::Matrix{T},
-                            R, α::T, λ::T, k::Int,
-                            A_bufs::Vector{Matrix{T}},
-                            b_bufs::Vector{Vector{T}},
-                            get_range::Function,
-                            get_col::Function,
-                            get_val::Function) where {T}
+                               b_bufs::Vector{Vector{T}},
+                               Z_bufs::Vector{Matrix{T}},
+                               w_bufs::Vector{Vector{T}}) where {T}
     n = size(target, 2)
+    colval = R.colval
+    nzval = R.nzval
 
-    # Precompute Gramian: SᵀS + λI (shared across all users/items)
-    gramian = source * source'  # k×k
-    gramian .+= λ .* I(k)
+    # Precompute Gramian: SᵀS + λI (upper triangle only)
+    gramian = Matrix{T}(undef, k, k)
+    BLAS.syrk!('U', 'N', one(T), source, zero(T), gramian)
+    @inbounds for d in 1:k
+        gramian[d, d] += λ
+    end
 
     Threads.@threads :static for u in 1:n
         tid = Threads.threadid()
         A = A_bufs[tid]
         b = b_bufs[tid]
+        Z = Z_bufs[tid]
 
-        # Start with the shared Gramian
-        copyto!(A, gramian)
+        # Gather rated item vectors, scale for syrk, and accumulate b in one pass
+        m = 0
         fill!(b, zero(T))
-
-        # Add per-entity corrections from non-zero entries
-        @inbounds for idx in get_range(u)
-            i = get_col(idx)
-            r_ui = get_val(idx)
-            c_ui = α * r_ui  # confidence boost (beyond base 1 already in gramian)
-
-            # A += c_ui * s_i * s_i^T (rank-1 update)
-            for q in 1:k
-                sq = source[q, i]
-                bq = sq * (one(T) + c_ui)  # preference=1 * confidence
-                b[q] += bq
-                for p in 1:k
-                    A[p, q] += c_ui * source[p, i] * sq
-                end
+        @inbounds for idx in nzrange(R, u)
+            m += 1
+            i = Int(colval[idx])
+            c_ui = α * T(nzval[idx])
+            sq = sqrt(c_ui)
+            coeff = one(T) + c_ui
+            for f in 1:k
+                sf = source[f, i]
+                Z[f, m] = sf * sq
+                b[f] += coeff * sf
             end
         end
 
-        # Solve A * x = b via Cholesky
-        C = cholesky!(Symmetric(A))
-        x = C \ b
+        if m == 0
+            @inbounds for f in 1:k
+                target[f, u] = zero(T)
+            end
+            continue
+        end
+
+        # A = gramian + Z*Z' (Z already scaled by sqrt(c))
+        copyto!(A, gramian)
+        BLAS.syrk!('U', 'N', one(T), @view(Z[:, 1:m]), one(T), A)
+
+        # Solve via Cholesky
+        LAPACK.potrf!('U', A)
+        LAPACK.potrs!('U', A, b)
         @inbounds for f in 1:k
-            target[f, u] = x[f]
+            target[f, u] = b[f]
+        end
+    end
+end
+
+function _ials_update_factors!(target::Matrix{T}, source::Matrix{T},
+                               R::SparseMatrixCSC, α::T, λ::T, k::Int,
+                               A_bufs::Vector{Matrix{T}},
+                               b_bufs::Vector{Vector{T}},
+                               Z_bufs::Vector{Matrix{T}},
+                               w_bufs::Vector{Vector{T}}) where {T}
+    n = size(target, 2)
+    rv = rowvals(R)
+    nz = nonzeros(R)
+
+    # Precompute Gramian: SᵀS + λI (upper triangle only)
+    gramian = Matrix{T}(undef, k, k)
+    BLAS.syrk!('U', 'N', one(T), source, zero(T), gramian)
+    @inbounds for d in 1:k
+        gramian[d, d] += λ
+    end
+
+    Threads.@threads :static for j in 1:n
+        tid = Threads.threadid()
+        A = A_bufs[tid]
+        b = b_bufs[tid]
+        Z = Z_bufs[tid]
+
+        m = 0
+        fill!(b, zero(T))
+        @inbounds for idx in nzrange(R, j)
+            m += 1
+            i = Int(rv[idx])
+            c_ui = α * T(nz[idx])
+            sq = sqrt(c_ui)
+            coeff = one(T) + c_ui
+            for f in 1:k
+                sf = source[f, i]
+                Z[f, m] = sf * sq
+                b[f] += coeff * sf
+            end
+        end
+
+        if m == 0
+            @inbounds for f in 1:k
+                target[f, j] = zero(T)
+            end
+            continue
+        end
+
+        copyto!(A, gramian)
+        BLAS.syrk!('U', 'N', one(T), @view(Z[:, 1:m]), one(T), A)
+
+        LAPACK.potrf!('U', A)
+        LAPACK.potrs!('U', A, b)
+        @inbounds for f in 1:k
+            target[f, j] = b[f]
         end
     end
 end
@@ -264,12 +323,77 @@ function _ials_update_factors_cg!(target::Matrix{T}, source::Matrix{T},
                                   b_bufs::Vector{Vector{T}},
                                   r_bufs::Vector{Vector{T}},
                                   p_bufs::Vector{Vector{T}},
-                                  Ap_bufs::Vector{Vector{T}}) where {T}
-    _ials_update_cg_core!(target, source, R, α, λ, k, cg_steps,
-                          A_bufs, b_bufs, r_bufs, p_bufs, Ap_bufs,
-                          u -> nzrange(R, u),
-                          idx -> Int(R.colval[idx]),
-                          idx -> T(R.nzval[idx]))
+                                  Ap_bufs::Vector{Vector{T}},
+                                  Z_bufs::Vector{Matrix{T}},
+                                  w_bufs::Vector{Vector{T}}) where {T}
+    n = size(target, 2)
+    colval = R.colval
+    nzval = R.nzval
+
+    gramian = Matrix{T}(undef, k, k)
+    BLAS.syrk!('U', 'N', one(T), source, zero(T), gramian)
+    @inbounds for d in 1:k
+        gramian[d, d] += λ
+    end
+
+    Threads.@threads :static for u in 1:n
+        tid = Threads.threadid()
+        A = A_bufs[tid]
+        b = b_bufs[tid]
+        r = r_bufs[tid]
+        p = p_bufs[tid]
+        Ap = Ap_bufs[tid]
+        Z = Z_bufs[tid]
+
+        # Fused gather + b computation
+        m = 0
+        fill!(b, zero(T))
+        @inbounds for idx in nzrange(R, u)
+            m += 1
+            i = Int(colval[idx])
+            c_ui = α * T(nzval[idx])
+            sq = sqrt(c_ui)
+            coeff = one(T) + c_ui
+            for f in 1:k
+                sf = source[f, i]
+                Z[f, m] = sf * sq
+                b[f] += coeff * sf
+            end
+        end
+
+        # A = gramian + Z*Z'
+        copyto!(A, gramian)
+        if m > 0
+            BLAS.syrk!('U', 'N', one(T), @view(Z[:, 1:m]), one(T), A)
+        end
+
+        # CG solve with warm-start (symv uses upper triangle)
+        x = @view target[:, u]
+        BLAS.symv!('U', one(T), A, x, zero(T), r)
+        @inbounds @simd for f in 1:k
+            r[f] = b[f] - r[f]
+            p[f] = r[f]
+        end
+        rs_old = dot(r, r)
+
+        for _ in 1:cg_steps
+            BLAS.symv!('U', one(T), A, p, zero(T), Ap)
+            pAp = dot(p, Ap)
+            pAp < eps(T) && break
+            α_cg = rs_old / pAp
+            @inbounds @simd for f in 1:k
+                x[f] += α_cg * p[f]
+                r[f] -= α_cg * Ap[f]
+            end
+            rs_new = dot(r, r)
+            rs_new < eps(T) && break
+            β = rs_new / rs_old
+            @inbounds @simd for f in 1:k
+                p[f] = r[f] + β * p[f]
+            end
+            rs_old = rs_new
+        end
+    end
 end
 
 function _ials_update_factors_cg!(target::Matrix{T}, source::Matrix{T},
@@ -279,63 +403,50 @@ function _ials_update_factors_cg!(target::Matrix{T}, source::Matrix{T},
                                   b_bufs::Vector{Vector{T}},
                                   r_bufs::Vector{Vector{T}},
                                   p_bufs::Vector{Vector{T}},
-                                  Ap_bufs::Vector{Vector{T}}) where {T}
-    _ials_update_cg_core!(target, source, R, α, λ, k, cg_steps,
-                          A_bufs, b_bufs, r_bufs, p_bufs, Ap_bufs,
-                          j -> nzrange(R, j),
-                          idx -> Int(rowvals(R)[idx]),
-                          idx -> T(nonzeros(R)[idx]))
-end
-
-function _ials_update_cg_core!(target::Matrix{T}, source::Matrix{T},
-                               R, α::T, λ::T, k::Int, cg_steps::Int,
-                               A_bufs::Vector{Matrix{T}},
-                               b_bufs::Vector{Vector{T}},
-                               r_bufs::Vector{Vector{T}},
-                               p_bufs::Vector{Vector{T}},
-                               Ap_bufs::Vector{Vector{T}},
-                               get_range::Function,
-                               get_col::Function,
-                               get_val::Function) where {T}
+                                  Ap_bufs::Vector{Vector{T}},
+                                  Z_bufs::Vector{Matrix{T}},
+                                  w_bufs::Vector{Vector{T}}) where {T}
     n = size(target, 2)
+    rv = rowvals(R)
+    nz = nonzeros(R)
 
-    # Precompute Gramian: SᵀS + λI (shared across all users/items)
-    gramian = source * source'  # k×k
-    gramian .+= λ .* I(k)
+    gramian = Matrix{T}(undef, k, k)
+    BLAS.syrk!('U', 'N', one(T), source, zero(T), gramian)
+    @inbounds for d in 1:k
+        gramian[d, d] += λ
+    end
 
-    Threads.@threads :static for u in 1:n
+    Threads.@threads :static for j in 1:n
         tid = Threads.threadid()
         A = A_bufs[tid]
         b = b_bufs[tid]
         r = r_bufs[tid]
         p = p_bufs[tid]
         Ap = Ap_bufs[tid]
+        Z = Z_bufs[tid]
 
-        # Start with the shared Gramian
-        copyto!(A, gramian)
+        m = 0
         fill!(b, zero(T))
-
-        # Add per-entity corrections from non-zero entries
-        @inbounds for idx in get_range(u)
-            i = get_col(idx)
-            r_ui = get_val(idx)
-            c_ui = α * r_ui
-
-            for q in 1:k
-                sq = source[q, i]
-                bq = sq * (one(T) + c_ui)
-                b[q] += bq
-                for pp in 1:k
-                    A[pp, q] += c_ui * source[pp, i] * sq
-                end
+        @inbounds for idx in nzrange(R, j)
+            m += 1
+            i = Int(rv[idx])
+            c_ui = α * T(nz[idx])
+            sq = sqrt(c_ui)
+            coeff = one(T) + c_ui
+            for f in 1:k
+                sf = source[f, i]
+                Z[f, m] = sf * sq
+                b[f] += coeff * sf
             end
         end
 
-        # CG solve with warm-start from current embedding
-        # x₀ = target[:, u] (warm start)
-        # r₀ = b - A*x₀
-        x = @view target[:, u]
-        mul!(r, A, x)
+        copyto!(A, gramian)
+        if m > 0
+            BLAS.syrk!('U', 'N', one(T), @view(Z[:, 1:m]), one(T), A)
+        end
+
+        x = @view target[:, j]
+        BLAS.symv!('U', one(T), A, x, zero(T), r)
         @inbounds @simd for f in 1:k
             r[f] = b[f] - r[f]
             p[f] = r[f]
@@ -343,21 +454,17 @@ function _ials_update_cg_core!(target::Matrix{T}, source::Matrix{T},
         rs_old = dot(r, r)
 
         for _ in 1:cg_steps
-            # Ap = A * p
-            mul!(Ap, A, p)
+            BLAS.symv!('U', one(T), A, p, zero(T), Ap)
             pAp = dot(p, Ap)
             pAp < eps(T) && break
             α_cg = rs_old / pAp
-
             @inbounds @simd for f in 1:k
                 x[f] += α_cg * p[f]
                 r[f] -= α_cg * Ap[f]
             end
-
             rs_new = dot(r, r)
             rs_new < eps(T) && break
             β = rs_new / rs_old
-
             @inbounds @simd for f in 1:k
                 p[f] = r[f] + β * p[f]
             end
@@ -396,6 +503,7 @@ end
     predict(model::IALS, X; k=10) -> Matrix{Int}
 
 Return top-k item indices per user. Excludes already-interacted items.
+Uses batched GEMM for efficient score computation.
 """
 function predict(model::IALS{T}, X::SparseMatrixCSC; k::Int=10) where {T}
     model.is_fitted || error("Model not fitted")
@@ -403,25 +511,32 @@ function predict(model::IALS{T}, X::SparseMatrixCSC; k::Int=10) where {T}
     n_items = size(model.item_factors, 2)
     k_out = min(k, n_items)
 
-    preds = Matrix{Int}(undef, n_users, k_out)
-    scores_buf = Vector{T}(undef, n_items)
+    predictions = Matrix{Int}(undef, n_users, k_out)
     X_csr = to_csr(X)
 
-    for u in 1:n_users
-        # Compute scores = U[:,u]ᵀ V
-        mul!(scores_buf, model.item_factors', @view(model.user_factors[:, u]))
+    # Batched GEMM approach
+    max_batch_mem = 2 * 1024^3  # 2 GB target
+    batch_size = max(1, min(n_users, Int(floor(max_batch_mem / (n_items * sizeof(T))))))
 
-        # Mask already-seen items using CSR row access
-        @inbounds for idx in nzrange(X_csr, u)
-            j = Int(X_csr.colval[idx])
-            scores_buf[j] = T(-Inf)
+    for batch_start in 1:batch_size:n_users
+        batch_end = min(batch_start + batch_size - 1, n_users)
+        batch_users = batch_start:batch_end
+        n_batch = length(batch_users)
+
+        # Batched matrix multiply
+        scores = model.user_factors[:, batch_users]' * model.item_factors
+
+        Threads.@threads for local_u in 1:n_batch
+            global_u = batch_users[local_u]
+            @inbounds for idx in nzrange(X_csr, global_u)
+                j = Int(X_csr.colval[idx])
+                scores[local_u, j] = T(-Inf)
+            end
+            row = @view scores[local_u, :]
+            predictions[global_u, :] .= partialsortperm(row, 1:k_out; rev=true)
         end
-
-        # Top-k via partial sort
-        topk_idx = partialsortperm(scores_buf, 1:k_out; rev=true)
-        preds[u, :] .= topk_idx
     end
-    preds
+    predictions
 end
 
 """

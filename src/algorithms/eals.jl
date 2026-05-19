@@ -495,18 +495,18 @@ function predict(model::EALS{T}, X::SparseMatrixCSC; k::Int=10) where {T}
     n_items = size(model.item_factors, 2)
     k_out = min(k, n_items)
 
-    scores = model.user_factors' * model.item_factors  # n_users × n_items
     preds = Matrix{Int}(undef, n_users, k_out)
     X_csr = to_csr(X)
 
     Threads.@threads for u in 1:n_users
-        s = @view scores[u, :]
+        # Compute scores for this user: V' * u_vec (n_items vector)
+        scores = model.item_factors' * @view(model.user_factors[:, u])
         # Mask seen items
         @inbounds for idx in nzrange(X_csr, u)
             j = Int(X_csr.colval[idx])
-            scores[u, j] = T(-Inf)
+            scores[j] = T(-Inf)
         end
-        preds[u, :] .= partialsortperm(Vector(s), 1:k_out; rev=true)
+        preds[u, :] .= partialsortperm(scores, 1:k_out; rev=true)
     end
     preds
 end

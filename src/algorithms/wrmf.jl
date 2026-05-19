@@ -490,20 +490,48 @@ end
     predict(model::WRMF, X::SparseMatrixCSC; k=10) -> Matrix{Int}
 
 Return top-k item indices for each user. Returns `n_users × k` matrix.
+Processes users in batches to avoid allocating the full score matrix.
 """
 function predict(model::WRMF{T}, X::SparseMatrixCSC; k::Int = 10) where {T}
     model.is_fitted || error("Model not fitted. Call fit! first.")
-    user_emb = transform(model, X)
-    scores = user_emb' * model.item_factors  # n_users × n_items
-    n_users = size(scores, 1)
-    n_items = size(scores, 2)
+    n_users = size(X, 1)
+    n_items = size(model.item_factors, 2)
     k_actual = min(k, n_items)
 
+    # Use cached user factors if dimensions match (training data), else re-embed
+    if size(model.user_factors, 2) == n_users
+        user_emb = model.user_factors
+    else
+        user_emb = transform(model, X)
+    end
+
     predictions = Matrix{Int}(undef, n_users, k_actual)
-    for u in 1:n_users
-        row = @view scores[u, :]
-        perm = sortperm(row; rev=true)
-        @inbounds predictions[u, :] .= perm[1:k_actual]
+
+    # Process in batches to limit memory usage
+    max_batch_mem = 2 * 1024^3  # 2 GB target
+    batch_size = max(1, min(n_users, Int(floor(max_batch_mem / (n_items * sizeof(T))))))
+
+    X_csr = to_csr(X)
+
+    for batch_start in 1:batch_size:n_users
+        batch_end = min(batch_start + batch_size - 1, n_users)
+        batch_users = batch_start:batch_end
+        n_batch = length(batch_users)
+
+        # Compute scores for this batch: (batch × rank) × (rank × items) = batch × items
+        scores = user_emb[:, batch_users]' * model.item_factors
+
+        # Mask seen items and get top-k per user (threaded)
+        Threads.@threads for local_u in 1:n_batch
+            global_u = batch_users[local_u]
+            for idx in nzrange(X_csr, global_u)
+                j = Int(X_csr.colval[idx])
+                @inbounds scores[local_u, j] = T(-Inf)
+            end
+            row = @view scores[local_u, :]
+            perm = partialsortperm(row, 1:k_actual; rev=true)
+            @inbounds predictions[global_u, :] .= perm
+        end
     end
     predictions
 end

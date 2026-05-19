@@ -163,21 +163,21 @@ Return top-k item indices for each user. Returns `n_users × k` matrix.
 """
 function predict(model::LMF{T}, X::SparseMatrixCSC; k::Int = 10) where {T}
     model.is_fitted || error("Model not fitted")
-    scores = model.user_factors' * model.item_factors
-    n_users = size(scores, 1)
-    n_items = size(scores, 2)
+    n_users = size(X, 1)
+    n_items = size(model.item_factors, 2)
     k_actual = min(k, n_items)
     predictions = Matrix{Int}(undef, n_users, k_actual)
 
     X_csr = to_csr(X)
     Threads.@threads for u in 1:n_users
-        s = @view scores[u, :]
+        # Compute scores for this user only
+        scores = model.item_factors' * @view(model.user_factors[:, u])
         # Mask seen items
         @inbounds for idx in nzrange(X_csr, u)
             j = Int(X_csr.colval[idx])
-            scores[u, j] = T(-Inf)
+            scores[j] = T(-Inf)
         end
-        @inbounds predictions[u, :] .= partialsortperm(Vector(s), 1:k_actual; rev=true)
+        @inbounds predictions[u, :] .= partialsortperm(scores, 1:k_actual; rev=true)
     end
     predictions
 end
