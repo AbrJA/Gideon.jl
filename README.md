@@ -13,14 +13,19 @@
 
 ---
 
-Gideon.jl is a pure-Julia port and enhancement of the R package [rsparse](https://github.com/dselivanov/rsparse), providing a unified, extensible interface for matrix factorization, sparse regression, and recommender-system evaluation. All algorithms are validated against R reference outputs and optimized for production scale via multithreading and SIMD vectorization.
+Gideon.jl is a pure-Julia port and enhancement of the R package [rsparse](https://github.com/dselivanov/rsparse), providing a unified, extensible interface for matrix factorization, sparse regression, and recommender-system evaluation. All algorithms are validated against R reference outputs and optimized for production scale via multithreading, SIMD vectorization, and optional GPU acceleration.
 
 ## Features
 
-- **Unified API** — `fit!` / `predict` / `transform` for every model; no framework lock-in.
+- **Unified API** — `fit!` / `predict` / `predict_scores` / `transform` for every model; no framework lock-in.
 - **Production-grade performance** — zero-allocation inner loops, `@inbounds @simd` vectorization, BLAS-2 gram updates, per-thread pre-allocated buffers.
+- **GPU acceleration** — optional CUDA.jl extension for EASE, iALS, WRMF (via package extensions).
 - **R-validated correctness** — the full test suite includes a Tier-2 fixture layer that compares numerically against pre-computed R / rsparse outputs.
 - **Sparse-native** — all algorithms operate directly on `SparseMatrixCSC`; no dense conversion needed.
+- **Precompilation** — `PrecompileTools.jl` workloads reduce time-to-first-execution.
+- **Tables.jl integration** — accept interaction data as `(user, item, value)` triplets from any Tables.jl-compatible source.
+- **Cross-validation & search** — built-in temporal split, k-fold CV, grid search, and random search with warm-starting.
+- **Callback system** — extensible training hooks for early stopping, checkpointing, learning rate scheduling, and custom logging.
 
 ---
 
@@ -28,11 +33,16 @@ Gideon.jl is a pure-Julia port and enhancement of the R package [rsparse](https:
 
 | Model | Type | Reference |
 |-------|------|-----------|
-| `WRMF` | Implicit / Explicit ALS | Hu, Koren & Volinsky (2008) |
+| `WRMF` | Implicit / Explicit ALS (Cholesky, CG, NNLS) | Hu, Koren & Volinsky (2008) |
+| `IALS` | Implicit ALS with Gramian caching | Rendle et al. (2021) |
+| `EALS` | Element-wise ALS with popularity weighting | He et al. (2016) |
+| `BPR` | Bayesian Personalized Ranking (pairwise SGD) | Rendle et al. (2009) |
 | `LMF` | Logistic Matrix Factorization | Johnson (2014) |
-| `GloVe` | Co-occurrence embedding | Pennington, Socher & Manning (2014) |
-| `FTRL` | Follow The Regularized Leader (online logistic) | McMahan et al. (2013) |
-| `FactorizationMachine` | 2nd-order FM | Rendle (2010) |
+| `GloVe` | Co-occurrence embedding (Hogwild AdaGrad) | Pennington, Socher & Manning (2014) |
+| `EASE` | Embarrassingly Shallow Autoencoders | Steck (2019) |
+| `SLIM` | Sparse Linear Methods (elastic net) | Ning & Karypis (2011) |
+| `FTRL` | Follow The Regularized Leader (online GLM) | McMahan et al. (2013) |
+| `FactorizationMachine` | 2nd-order FM (AdaGrad SGD) | Rendle (2010) |
 | `soft_impute` / `soft_svd` | Low-rank matrix completion | Hastie et al. (2014) |
 
 ---
@@ -228,17 +238,30 @@ Gideon.jl
 ├── src/
 │   ├── Gideon.jl          # Module entry, exports
 │   ├── types.jl           # Abstract hierarchy, ALSSolver / FeedbackType enums
-│   ├── utils.jl           # init_factors, sigmoid, …
+│   ├── utils.jl           # init_factors, sigmoid, _inplace_shuffle!, …
 │   ├── sparse_utils.jl    # to_csr, dual_representation, row/col nnz
+│   ├── callbacks.jl       # EarlyStopping, Checkpoint, LRScheduler, custom hooks
+│   ├── crossval.jl        # temporal_split, kfold_cv, grid_search, random_search
+│   ├── serialization.jl   # save_model / load_model (versioned binary format)
+│   ├── tables.jl          # interactions_to_sparse / sparse_to_interactions
+│   ├── progress.jl        # ConvergenceMonitor, logging utilities
+│   ├── precompile.jl      # PrecompileTools workloads for TTFX
 │   ├── algorithms/
 │   │   ├── wrmf.jl        # Implicit/Explicit ALS (Cholesky · CG · NNLS)
+│   │   ├── ials.jl        # iALS with Gramian caching
+│   │   ├── eals.jl        # Element-wise ALS (popularity-weighted)
+│   │   ├── bpr.jl         # Bayesian Personalized Ranking (pairwise SGD)
 │   │   ├── lmf.jl         # Logistic MF with negative sampling
 │   │   ├── glove.jl       # GloVe Hogwild AdaGrad
+│   │   ├── ease.jl        # EASE (closed-form autoencoder)
+│   │   ├── slim.jl        # SLIM (elastic-net item-item)
 │   │   ├── ftrl.jl        # Follow The Regularized Leader (online)
 │   │   ├── fm.jl          # Factorization Machines
 │   │   └── soft_impute.jl # SoftImpute / SoftSVD
 │   └── metrics/
 │       └── ranking.jl     # AP@K, MAP@K, NDCG@K, Precision@K, Recall@K
+├── ext/
+│   └── GideonCUDAExt.jl   # GPU acceleration (EASE, iALS, WRMF, predict)
 └── test/
     ├── runtests.jl
     └── r_correctness.jl   # Numerical validation against R / rsparse
@@ -248,8 +271,9 @@ Gideon.jl
 
 ```julia
 AbstractSparseModel
-├── AbstractMatrixFactorization   →  WRMF, LMF, GloVe, SoftImputeResult
+├── AbstractMatrixFactorization   →  WRMF, IALS, EALS, LMF, BPR, GloVe, SoftImputeResult
 └── AbstractSparseRegression      →  FTRL, FactorizationMachine
+# Item-item models (no abstract parent):    EASE, SLIM
 ```
 
 Every model implements the same generic interface:
@@ -257,10 +281,76 @@ Every model implements the same generic interface:
 | Function | Description |
 |----------|-------------|
 | `fit!(model, X)` | Train in-place on sparse matrix `X` |
-| `partial_fit!(model, X, y)` | Online update (FTRL, FM) |
-| `predict(model, X)` | Return predictions / scores |
+| `partial_fit!(model, X, y)` | Online/incremental update (FTRL, FM, eALS) |
+| `predict(model, X; k)` | Return top-k item indices per user |
+| `predict_scores(model, X)` | Return full user×item score matrix |
 | `transform(model, X)` | Return latent embeddings for new users |
 | `coef(model)` | Return learned weight vector (FTRL) |
+
+---
+
+## GPU Acceleration
+
+With [CUDA.jl](https://github.com/JuliaGPU/CUDA.jl) installed, Gideon loads a package extension providing:
+
+```julia
+using Gideon, CUDA
+
+# GPU-accelerated EASE (fully on GPU)
+fit_gpu!(model::EASE, X)
+
+# GPU-accelerated iALS/WRMF (Gramian on GPU, solve on CPU)
+fit_gpu!(model::IALS, X)
+fit_gpu!(model::WRMF, X)
+
+# Score computation on GPU for any matrix factorization model
+predict_scores_gpu(model, X)
+predict_gpu(model, X; k=10)
+```
+
+---
+
+## Tables.jl Integration
+
+Accept interaction data from any Tables.jl-compatible source (DataFrames, CSV rows, etc.):
+
+```julia
+using Gideon
+
+# From a NamedTuple of vectors (column table)
+data = (user=[1,1,2,3,3], item=[2,5,3,1,4], value=[1.0,2.0,1.0,3.0,1.0])
+X = interactions_to_sparse(data)
+
+# From a Vector of NamedTuples (row table)
+rows = [(user=1, item=3, value=1.0), (user=2, item=1, value=2.0)]
+X = interactions_to_sparse(rows)
+
+# Convert back to triplets
+triplets = sparse_to_interactions(X)
+```
+
+---
+
+## Cross-Validation & Hyperparameter Search
+
+```julia
+using Gideon, SparseArrays
+
+X = sprand(1000, 500, 0.02)
+
+# Temporal train/test split
+X_train, X_test = temporal_split(X; ratio=0.8)
+
+# Grid search over hyperparameters
+best = grid_search(WRMF, X_train, X_test;
+    params = (rank=[16, 32, 64], λ=[0.01, 0.1, 1.0]),
+    metric = :ndcg, k = 10)
+
+# Random search with budget
+best = random_search(WRMF, X_train, X_test;
+    params = (rank=16:128, λ=LogRange(1e-4, 1.0)),
+    n_trials = 20, metric = :ndcg, k = 10)
+```
 
 ---
 
@@ -270,28 +360,34 @@ Every model implements the same generic interface:
 |-----------|-----------|
 | Pre-allocated per-thread Gram / RHS / Cholesky buffers | WRMF ALS sweep |
 | `BLAS.syr!` rank-1 Gram accumulation | WRMF Cholesky solver |
-| `BLAS.syrk!` item Gram `YᵀY` | WRMF both solvers |
+| `BLAS.syrk!` item Gram `YᵀY` | WRMF, iALS |
 | Fast-path manual SIMD dot (`@inbounds @simd`) for sparse users with < 32 nnz | WRMF CG `_implicit_matvec!` |
-| `@inbounds @simd` vectorized dot / gradient loops | WRMF loss, LMF SGD, GloVe AdaGrad |
-| CSR transpose `SparseMatrixCSC(actual')` — O(nnz_u) per-user row access | All ranking metrics |
-| `Threads.@threads :static` outer loops | WRMF user / item sweeps |
-| `LoopVectorization.jl` as SIMD infrastructure | All hot paths |
-
-WRMF with Conjugate-Gradient at the MEGA scale (1 M users × 100 K items, ~10 nnz/user) benefits most from the fast sparse-dot path, which eliminates BLAS call overhead entirely for sparse rows.
+| `@inbounds @simd` vectorized dot / gradient loops | WRMF, LMF, GloVe, BPR, eALS |
+| CSR dual storage for O(nnz_u) per-user row access | All algorithms, metrics |
+| `Threads.@threads :static` outer loops | WRMF, iALS, eALS, BPR user/item sweeps |
+| Element-wise coordinate descent O(d) per update | eALS |
+| Gramian caching (avoids per-user recomputation) | iALS, eALS |
+| Zero-allocation Fisher-Yates shuffle | GloVe epoch shuffling |
+| Numerical stability (epsilon floors in AdaGrad) | GloVe, FM |
+| PrecompileTools workloads | All algorithms (reduces TTFX) |
+| Optional GPU offloading via CUDA.jl extension | EASE, iALS, WRMF, predict |
 
 ---
 
 ## Testing
 
 ```bash
-julia --project=. --threads=4,2 -e 'using Pkg; Pkg.test()'
+julia --project=. --threads=4 -e 'using Pkg; Pkg.test()'
 ```
 
-The suite runs **164 tests** covering:
+The suite runs **420+ tests** covering:
 
 - Unit correctness (dimensions, NaN / Inf guards, convergence monotonicity)
 - R / rsparse numerical fixture comparisons (weights, predictions, loss values)
 - Static analysis via [Aqua.jl](https://github.com/JuliaTesting/Aqua.jl) and [JET.jl](https://github.com/aviatesk/JET.jl)
+- All algorithms: WRMF, iALS, eALS, BPR, LMF, GloVe, EASE, SLIM, FTRL, FM, SoftImpute
+- Infrastructure: serialization, cross-validation, callbacks, Tables.jl integration
+- GPU stubs (full GPU tests when CUDA available)
 
 ---
 
@@ -302,8 +398,13 @@ The suite runs **164 tests** covering:
 | `SparseArrays` (stdlib) | Core sparse matrix type |
 | `LinearAlgebra` (stdlib) | BLAS / LAPACK, SVD, Cholesky |
 | `SparseMatricesCSR.jl` | CSR representation for row-oriented access |
-| `StaticArrays.jl` | Stack-allocated small arrays |
-| `LoopVectorization.jl` | SIMD vectorization infrastructure |
+| `PrecompileTools.jl` | Precompilation workloads for faster TTFX |
+
+### Optional (Extensions)
+
+| Package | Role |
+|---------|------|
+| `CUDA.jl` | GPU acceleration via package extension |
 
 ---
 

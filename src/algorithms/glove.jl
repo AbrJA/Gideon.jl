@@ -127,7 +127,11 @@ function fit!(model::GloVe{T}, X::SparseMatrixCSC{Tv,Ti};
 
     for iter in 1:n_iter
         iter_start = time_ns()
-        order = model.shuffle ? randperm(rng, nnz_count) : (1:nnz_count)
+        order = if model.shuffle
+            _inplace_shuffle!(collect(1:nnz_count), rng)
+        else
+            1:nnz_count
+        end
         epoch_cost = _glove_epoch!(model, rows, cols, vals, order)
 
         if isnan(epoch_cost)
@@ -192,14 +196,14 @@ function _glove_epoch!(model::GloVe{T}, rows, cols, vals, order) where {T}
         local_costs[tid] += weight * diff^2
         grad_common = T(2) * weight * diff
 
-        # AdaGrad update (Hogwild writes)
+        # AdaGrad update (Hogwild writes) with numerical floor
         @inbounds @simd for f in 1:k
             g_main = grad_common * Wc[f, j] + λ * W[f, i]
             g_ctx  = grad_common * W[f, i]  + λ * Wc[f, j]
             gW[f, i]  += g_main * g_main
             gWc[f, j] += g_ctx * g_ctx
-            W[f, i]  -= lr * g_main / sqrt(gW[f, i])
-            Wc[f, j] -= lr * g_ctx  / sqrt(gWc[f, j])
+            W[f, i]  -= lr * g_main / (sqrt(gW[f, i]) + T(1e-8))
+            Wc[f, j] -= lr * g_ctx  / (sqrt(gWc[f, j]) + T(1e-8))
         end
 
         g_bi = grad_common
@@ -207,8 +211,8 @@ function _glove_epoch!(model::GloVe{T}, rows, cols, vals, order) where {T}
         @inbounds begin
             gb[i]  += g_bi^2
             gbc[j] += g_bj^2
-            b[i]  -= lr * g_bi / sqrt(gb[i])
-            bc[j] -= lr * g_bj / sqrt(gbc[j])
+            b[i]  -= lr * g_bi / (sqrt(gb[i]) + T(1e-8))
+            bc[j] -= lr * g_bj / (sqrt(gbc[j]) + T(1e-8))
         end
     end
     sum(local_costs)

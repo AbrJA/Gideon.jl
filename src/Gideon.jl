@@ -7,6 +7,7 @@ using Random
 using Logging
 using Printf
 using Serialization
+using PrecompileTools
 
 # ── Core types & API ──
 include("types.jl")
@@ -19,6 +20,7 @@ include("serialization.jl")
 # ── Algorithms ──
 include("algorithms/wrmf.jl")
 include("algorithms/ials.jl")
+include("algorithms/eals.jl")
 include("algorithms/ftrl.jl")
 include("algorithms/fm.jl")
 include("algorithms/glove.jl")
@@ -31,6 +33,12 @@ include("algorithms/soft_impute.jl")
 # ── Metrics & evaluation ──
 include("metrics/ranking.jl")
 include("crossval.jl")
+
+# ── Tables.jl integration ──
+include("tables.jl")
+
+# ── Precompilation ──
+include("precompile.jl")
 
 # ── Public API ──
 export
@@ -45,6 +53,7 @@ export
     # Models
     WRMF,
     IALS,
+    EALS,
     FTRL,
     FactorizationMachine,
     GloVe,
@@ -59,6 +68,9 @@ export
     transform,
     predict,
     predict_scores,
+    predict_scores_gpu,
+    predict_gpu,
+    fit_gpu!,
     partial_fit!,
     coef,
 
@@ -98,6 +110,10 @@ export
     to_csr,
     sparse_row_norms,
     sparse_col_nnz,
+
+    # Tables.jl integration
+    interactions_to_sparse,
+    sparse_to_interactions,
     sparse_row_nnz,
     dual_representation,
 
@@ -109,7 +125,5 @@ export
 function fit_gpu! end
 function predict_gpu end
 function predict_scores_gpu end
-
-export fit_gpu!, predict_gpu, predict_scores_gpu
 
 end # module Gideon

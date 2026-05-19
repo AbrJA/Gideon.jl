@@ -168,10 +168,26 @@ function predict(model::LMF{T}, X::SparseMatrixCSC; k::Int = 10) where {T}
     n_items = size(scores, 2)
     k_actual = min(k, n_items)
     predictions = Matrix{Int}(undef, n_users, k_actual)
-    for u in 1:n_users
-        row = @view scores[u, :]
-        perm = sortperm(row; rev=true)
-        @inbounds predictions[u, :] .= perm[1:k_actual]
+
+    X_csr = to_csr(X)
+    Threads.@threads for u in 1:n_users
+        s = @view scores[u, :]
+        # Mask seen items
+        @inbounds for idx in nzrange(X_csr, u)
+            j = Int(X_csr.colval[idx])
+            scores[u, j] = T(-Inf)
+        end
+        @inbounds predictions[u, :] .= partialsortperm(Vector(s), 1:k_actual; rev=true)
     end
     predictions
+end
+
+"""
+    predict_scores(model::LMF, X) -> Matrix
+
+Return the full score matrix (n_users × n_items) = U' * V.
+"""
+function predict_scores(model::LMF{T}, X::SparseMatrixCSC) where {T}
+    model.is_fitted || error("Model not fitted")
+    model.user_factors' * model.item_factors
 end

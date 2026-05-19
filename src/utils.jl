@@ -66,3 +66,17 @@ Apply the GLM link function for the given family:
         return exp(x)
     end
 end
+
+"""
+    _inplace_shuffle!(v, rng) -> v
+
+Fisher-Yates in-place shuffle — O(n) time, zero allocations beyond the vector itself.
+"""
+function _inplace_shuffle!(v::AbstractVector, rng::AbstractRNG)
+    n = length(v)
+    @inbounds for i in n:-1:2
+        j = rand(rng, 1:i)
+        v[i], v[j] = v[j], v[i]
+    end
+    v
+end

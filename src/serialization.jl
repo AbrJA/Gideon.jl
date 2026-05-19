@@ -2,17 +2,28 @@
 # Serialization — save and load Gideon models
 # ──────────────────────────────────────────────────────────────────────────────
 
+const GIDEON_SERIALIZATION_VERSION = 2
+
 """
     save_model(model, path::String)
 
 Serialize a Gideon model to disk using Julia's native serialization.
-Includes a version header for forward-compatibility checking.
+Includes a version header and type information for forward-compatibility checking.
+
+# Example
+```julia
+model = EASE(λ=100.0)
+fit!(model, X)
+save_model(model, "my_model.jls")
+```
 """
 function save_model(model::AbstractSparseModel, path::String)
+    dir = dirname(path)
+    !isempty(dir) && mkpath(dir)
     open(path, "w") do io
-        # Version header
-        write(io, "GIDEON_v1\n")
-        serialize(io, typeof(model))
+        # Version header (v2 includes package version)
+        write(io, "GIDEON_v$(GIDEON_SERIALIZATION_VERSION)\n")
+        serialize(io, string(typeof(model)))
         serialize(io, model)
     end
     nothing
@@ -22,17 +33,25 @@ end
     load_model(path::String) -> AbstractSparseModel
 
 Deserialize a model from disk. Verifies the version header.
+
+# Example
+```julia
+model = load_model("my_model.jls")
+predictions = predict(model, X; k=10)
+```
 """
 function load_model(path::String)
+    isfile(path) || error("Model file not found: $path")
     open(path, "r") do io
         header = readline(io)
         startswith(header, "GIDEON_v") ||
-            error("Invalid model file: missing GIDEON header")
-        _ = deserialize(io)  # type (for validation)
+            error("Invalid model file: missing GIDEON header in '$path'")
+        # Parse version
+        version_str = replace(header, "GIDEON_v" => "")
+        version = tryparse(Int, version_str)
+        version === nothing && error("Invalid version in header: '$header'")
+        _ = deserialize(io)  # type string (for validation/logging)
         model = deserialize(io)
         model
     end
 end
-
-# Also handle EASE which isn't AbstractSparseModel... wait it is now
-# (we made EASE <: AbstractSparseModel)

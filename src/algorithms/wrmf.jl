@@ -507,3 +507,39 @@ function predict(model::WRMF{T}, X::SparseMatrixCSC; k::Int = 10) where {T}
     end
     predictions
 end
+
+"""
+    predict_scores(model::WRMF, X) -> Matrix
+
+Return the full score matrix (n_users × n_items) without top-k filtering.
+Uses `transform` to embed users, then computes inner products with item factors.
+"""
+function predict_scores(model::WRMF{T}, X::SparseMatrixCSC) where {T}
+    model.is_fitted || error("Model not fitted. Call fit! first.")
+    user_emb = transform(model, X)
+    user_emb' * model.item_factors
+end
+
+"""
+    predict_scores(model::WRMF, user_indices, item_indices) -> Vector
+
+Return raw scores for specific (user, item) pairs using pre-fitted factors.
+"""
+function predict_scores(model::WRMF{T}, user_indices::AbstractVector{<:Integer},
+                        item_indices::AbstractVector{<:Integer}) where {T}
+    model.is_fitted || error("Model not fitted. Call fit! first.")
+    @assert length(user_indices) == length(item_indices)
+    n = length(user_indices)
+    scores = Vector{T}(undef, n)
+    k = model.rank
+    @inbounds for idx in 1:n
+        u = user_indices[idx]
+        i = item_indices[idx]
+        s = zero(T)
+        @simd for f in 1:k
+            s += model.user_factors[f, u] * model.item_factors[f, i]
+        end
+        scores[idx] = s
+    end
+    scores
+end
