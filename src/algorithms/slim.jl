@@ -183,20 +183,40 @@ function predict(model::SLIM{T}, X::SparseMatrixCSC; k::Int=10) where {T}
 
     # Compute all scores at once: S = X * W (sparse × sparse)
     S = X * model.W
+    S_csr = to_csr(S)
     preds = Matrix{Int}(undef, n_users, k_out)
     X_csr = to_csr(X)
 
-    Threads.@threads for u in 1:n_users
-        scores = Vector{T}(S[u, :])
+    nt = Threads.maxthreadid()
+    topk_bufs = [Vector{Int}(undef, k_out) for _ in 1:nt]
+    score_bufs = [zeros(T, n_items) for _ in 1:nt]
 
-        # Mask seen items using CSR row access
+    Threads.@threads for u in 1:n_users
+        tid = Threads.threadid()
+        scores = score_bufs[tid]
+
+        # Zero out scores
+        @inbounds @simd for i in 1:n_items
+            scores[i] = zero(T)
+        end
+
+        # Fill from CSR row of S
+        @inbounds for idx in nzrange(S_csr, u)
+            j = Int(S_csr.colval[idx])
+            scores[j] = S_csr.nzval[idx]
+        end
+
+        # Mask seen items
         @inbounds for idx in nzrange(X_csr, u)
             j = Int(X_csr.colval[idx])
             scores[j] = T(-Inf)
         end
 
-        topk = partialsortperm(scores, 1:k_out; rev=true)
-        preds[u, :] .= topk
+        topk = topk_bufs[tid]
+        _topk_indices!(topk, scores, k_out)
+        @inbounds for i in 1:k_out
+            preds[u, i] = topk[i]
+        end
     end
     preds
 end

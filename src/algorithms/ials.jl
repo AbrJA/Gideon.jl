@@ -312,8 +312,11 @@ function _ials_update_factors!(target::Matrix{T}, source::Matrix{T},
 end
 
 # ──────────────────────────────────────────────────────────────────────────────
-# CG solver path — O(d² × cg_steps) per user instead of O(d³)
-# Uses warm-start from previous iteration's embedding as initial guess.
+# CG solver path — uses implicit matrix-vector products (no A formed)
+# Instead of forming A = gramian + Σ c_ui y_i y_iᵀ, compute A*v as:
+#   A*v = gramian*v + Σ c_ui * y_i * (y_iᵀ * v)
+# This is O(k + mk) per CG step instead of O(k²m) for syrk.
+# Much faster for large k with few CG steps.
 # ──────────────────────────────────────────────────────────────────────────────
 
 function _ials_update_factors_cg!(target::Matrix{T}, source::Matrix{T},
@@ -330,46 +333,49 @@ function _ials_update_factors_cg!(target::Matrix{T}, source::Matrix{T},
     colval = R.colval
     nzval = R.nzval
 
+    # Gramian = SᵀS + λI (full symmetric for symv)
     gramian = Matrix{T}(undef, k, k)
     BLAS.syrk!('U', 'N', one(T), source, zero(T), gramian)
+    LinearAlgebra.copytri!(gramian, 'U')
     @inbounds for d in 1:k
         gramian[d, d] += λ
     end
 
     Threads.@threads :static for u in 1:n
         tid = Threads.threadid()
-        A = A_bufs[tid]
         b = b_bufs[tid]
         r = r_bufs[tid]
         p = p_bufs[tid]
         Ap = Ap_bufs[tid]
-        Z = Z_bufs[tid]
 
-        # Fused gather + b computation
-        m = 0
+        # Compute b = Σ (1 + c_ui) * y_i
         fill!(b, zero(T))
         @inbounds for idx in nzrange(R, u)
-            m += 1
             i = Int(colval[idx])
             c_ui = α * T(nzval[idx])
-            sq = sqrt(c_ui)
             coeff = one(T) + c_ui
-            for f in 1:k
-                sf = source[f, i]
-                Z[f, m] = sf * sq
-                b[f] += coeff * sf
+            @simd for f in 1:k
+                b[f] += coeff * source[f, i]
             end
         end
 
-        # A = gramian + Z*Z'
-        copyto!(A, gramian)
-        if m > 0
-            BLAS.syrk!('U', 'N', one(T), @view(Z[:, 1:m]), one(T), A)
-        end
-
-        # CG solve with warm-start (symv uses upper triangle)
+        # CG solve with warm-start and implicit A*v
         x = @view target[:, u]
-        BLAS.symv!('U', one(T), A, x, zero(T), r)
+
+        # r = b - A*x where A*x = gramian*x + Σ c_ui * y_i * (y_iᵀ * x)
+        BLAS.gemv!('N', one(T), gramian, x, zero(T), r)
+        @inbounds for idx in nzrange(R, u)
+            i = Int(colval[idx])
+            c_ui = α * T(nzval[idx])
+            d = zero(T)
+            @simd for f in 1:k
+                d += source[f, i] * x[f]
+            end
+            cd = c_ui * d
+            @simd for f in 1:k
+                r[f] += cd * source[f, i]
+            end
+        end
         @inbounds @simd for f in 1:k
             r[f] = b[f] - r[f]
             p[f] = r[f]
@@ -377,7 +383,21 @@ function _ials_update_factors_cg!(target::Matrix{T}, source::Matrix{T},
         rs_old = dot(r, r)
 
         for _ in 1:cg_steps
-            BLAS.symv!('U', one(T), A, p, zero(T), Ap)
+            # Ap = A*p (implicit)
+            BLAS.gemv!('N', one(T), gramian, p, zero(T), Ap)
+            @inbounds for idx in nzrange(R, u)
+                i = Int(colval[idx])
+                c_ui = α * T(nzval[idx])
+                d = zero(T)
+                @simd for f in 1:k
+                    d += source[f, i] * p[f]
+                end
+                cd = c_ui * d
+                @simd for f in 1:k
+                    Ap[f] += cd * source[f, i]
+                end
+            end
+
             pAp = dot(p, Ap)
             pAp < eps(T) && break
             α_cg = rs_old / pAp
@@ -412,41 +432,43 @@ function _ials_update_factors_cg!(target::Matrix{T}, source::Matrix{T},
 
     gramian = Matrix{T}(undef, k, k)
     BLAS.syrk!('U', 'N', one(T), source, zero(T), gramian)
+    LinearAlgebra.copytri!(gramian, 'U')
     @inbounds for d in 1:k
         gramian[d, d] += λ
     end
 
     Threads.@threads :static for j in 1:n
         tid = Threads.threadid()
-        A = A_bufs[tid]
         b = b_bufs[tid]
         r = r_bufs[tid]
         p = p_bufs[tid]
         Ap = Ap_bufs[tid]
-        Z = Z_bufs[tid]
 
-        m = 0
         fill!(b, zero(T))
         @inbounds for idx in nzrange(R, j)
-            m += 1
             i = Int(rv[idx])
             c_ui = α * T(nz[idx])
-            sq = sqrt(c_ui)
             coeff = one(T) + c_ui
-            for f in 1:k
-                sf = source[f, i]
-                Z[f, m] = sf * sq
-                b[f] += coeff * sf
+            @simd for f in 1:k
+                b[f] += coeff * source[f, i]
             end
         end
 
-        copyto!(A, gramian)
-        if m > 0
-            BLAS.syrk!('U', 'N', one(T), @view(Z[:, 1:m]), one(T), A)
-        end
-
         x = @view target[:, j]
-        BLAS.symv!('U', one(T), A, x, zero(T), r)
+
+        BLAS.gemv!('N', one(T), gramian, x, zero(T), r)
+        @inbounds for idx in nzrange(R, j)
+            i = Int(rv[idx])
+            c_ui = α * T(nz[idx])
+            d = zero(T)
+            @simd for f in 1:k
+                d += source[f, i] * x[f]
+            end
+            cd = c_ui * d
+            @simd for f in 1:k
+                r[f] += cd * source[f, i]
+            end
+        end
         @inbounds @simd for f in 1:k
             r[f] = b[f] - r[f]
             p[f] = r[f]
@@ -454,7 +476,20 @@ function _ials_update_factors_cg!(target::Matrix{T}, source::Matrix{T},
         rs_old = dot(r, r)
 
         for _ in 1:cg_steps
-            BLAS.symv!('U', one(T), A, p, zero(T), Ap)
+            BLAS.gemv!('N', one(T), gramian, p, zero(T), Ap)
+            @inbounds for idx in nzrange(R, j)
+                i = Int(rv[idx])
+                c_ui = α * T(nz[idx])
+                d = zero(T)
+                @simd for f in 1:k
+                    d += source[f, i] * p[f]
+                end
+                cd = c_ui * d
+                @simd for f in 1:k
+                    Ap[f] += cd * source[f, i]
+                end
+            end
+
             pAp = dot(p, Ap)
             pAp < eps(T) && break
             α_cg = rs_old / pAp
@@ -518,24 +553,41 @@ function predict(model::IALS{T}, X::SparseMatrixCSC; k::Int=10) where {T}
     max_batch_mem = 2 * 1024^3  # 2 GB target
     batch_size = max(1, min(n_users, Int(floor(max_batch_mem / (n_items * sizeof(T))))))
 
+    # Pre-allocate buffers — n_items × batch_size so each user is a contiguous column
+    nt = Threads.maxthreadid()
+    topk_bufs = [Vector{Int}(undef, k_out) for _ in 1:nt]
+    scores_buf = Matrix{T}(undef, n_items, batch_size)
+
+    # Use multi-threaded BLAS for the large GEMM
+    old_blas = BLAS.get_num_threads()
+    BLAS.set_num_threads(Threads.nthreads())
+
     for batch_start in 1:batch_size:n_users
         batch_end = min(batch_start + batch_size - 1, n_users)
         batch_users = batch_start:batch_end
         n_batch = length(batch_users)
 
-        # Batched matrix multiply
-        scores = model.user_factors[:, batch_users]' * model.item_factors
+        # GEMM: n_items × n_batch = item_factors' * user_factors[:,batch]
+        scores = @view scores_buf[:, 1:n_batch]
+        mul!(scores, model.item_factors', @view(model.user_factors[:, batch_users]))
 
         Threads.@threads for local_u in 1:n_batch
+            tid = Threads.threadid()
             global_u = batch_users[local_u]
             @inbounds for idx in nzrange(X_csr, global_u)
                 j = Int(X_csr.colval[idx])
-                scores[local_u, j] = T(-Inf)
+                scores_buf[j, local_u] = T(-Inf)
             end
-            row = @view scores[local_u, :]
-            predictions[global_u, :] .= partialsortperm(row, 1:k_out; rev=true)
+            col = @view scores_buf[:, local_u]
+            topk = topk_bufs[tid]
+            _topk_indices!(topk, col, k_out)
+            @inbounds for i in 1:k_out
+                predictions[global_u, i] = topk[i]
+            end
         end
     end
+
+    BLAS.set_num_threads(old_blas)
     predictions
 end
 

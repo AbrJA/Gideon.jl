@@ -126,17 +126,23 @@ function predict(model::EASE{T}, X::SparseMatrixCSC; k::Int=10) where {T}
     preds = Matrix{Int}(undef, n_users, k_out)
     X_csr = to_csr(X)
 
-    Threads.@threads for u in 1:n_users
-        scores = @view S[u, :]
+    nt = Threads.maxthreadid()
+    topk_bufs = [Vector{Int}(undef, k_out) for _ in 1:nt]
 
+    Threads.@threads for u in 1:n_users
+        tid = Threads.threadid()
         # Mask seen items using CSR row access
         @inbounds for idx in nzrange(X_csr, u)
             j = Int(X_csr.colval[idx])
             S[u, j] = T(-Inf)
         end
 
-        topk = partialsortperm(Vector(scores), 1:k_out; rev=true)
-        preds[u, :] .= topk
+        row = @view S[u, :]
+        topk = topk_bufs[tid]
+        _topk_indices!(topk, row, k_out)
+        @inbounds for i in 1:k_out
+            preds[u, i] = topk[i]
+        end
     end
     preds
 end

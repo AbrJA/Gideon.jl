@@ -513,26 +513,44 @@ function predict(model::WRMF{T}, X::SparseMatrixCSC; k::Int = 10) where {T}
 
     X_csr = to_csr(X)
 
+    # Pre-allocate buffers — scores stored as n_items × batch_size (column-per-user)
+    # so that each user's scores vector is a contiguous column (cache-friendly top-k)
+    nt = Threads.maxthreadid()
+    topk_bufs = [Vector{Int}(undef, k_actual) for _ in 1:nt]
+    scores_buf = Matrix{T}(undef, n_items, batch_size)
+
+    # Use multi-threaded BLAS for the large GEMM
+    old_blas = BLAS.get_num_threads()
+    BLAS.set_num_threads(Threads.nthreads())
+
     for batch_start in 1:batch_size:n_users
         batch_end = min(batch_start + batch_size - 1, n_users)
         batch_users = batch_start:batch_end
         n_batch = length(batch_users)
 
-        # Compute scores for this batch: (batch × rank) × (rank × items) = batch × items
-        scores = user_emb[:, batch_users]' * model.item_factors
+        # GEMM: scores_buf[:,1:n_batch] = item_factors' * user_emb[:,batch_users]
+        # Result: n_items × n_batch, each column = scores for one user (contiguous!)
+        scores = @view scores_buf[:, 1:n_batch]
+        mul!(scores, model.item_factors', @view(user_emb[:, batch_users]))
 
         # Mask seen items and get top-k per user (threaded)
         Threads.@threads for local_u in 1:n_batch
+            tid = Threads.threadid()
             global_u = batch_users[local_u]
-            for idx in nzrange(X_csr, global_u)
+            @inbounds for idx in nzrange(X_csr, global_u)
                 j = Int(X_csr.colval[idx])
-                @inbounds scores[local_u, j] = T(-Inf)
+                scores_buf[j, local_u] = T(-Inf)
             end
-            row = @view scores[local_u, :]
-            perm = partialsortperm(row, 1:k_actual; rev=true)
-            @inbounds predictions[global_u, :] .= perm
+            col = @view scores_buf[:, local_u]
+            topk = topk_bufs[tid]
+            _topk_indices!(topk, col, k_actual)
+            @inbounds for i in 1:k_actual
+                predictions[global_u, i] = topk[i]
+            end
         end
     end
+
+    BLAS.set_num_threads(old_blas)
     predictions
 end
 

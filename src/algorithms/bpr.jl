@@ -434,26 +434,42 @@ function predict(model::BPR{T}, X::SparseMatrixCSC; k::Int=10) where {T}
     max_batch_mem = 2 * 1024^3  # 2 GB target
     batch_size = max(1, min(n_users, Int(floor(max_batch_mem / (n_items * sizeof(T))))))
 
+    # Pre-allocate buffers — n_items × batch_size so each user is a contiguous column
+    nt = Threads.maxthreadid()
+    topk_bufs = [Vector{Int}(undef, k_out) for _ in 1:nt]
+    scores_buf = Matrix{T}(undef, n_items, batch_size)
+
+    # Use multi-threaded BLAS for the large GEMM
+    old_blas = BLAS.get_num_threads()
+    BLAS.set_num_threads(Threads.nthreads())
+
     for batch_start in 1:batch_size:n_users
         batch_end = min(batch_start + batch_size - 1, n_users)
         batch_users = batch_start:batch_end
         n_batch = length(batch_users)
 
-        # Batched matrix multiply: (n_batch × rank) × (rank × n_items) = (n_batch × n_items)
-        scores = model.user_factors[:, batch_users]' * model.item_factors
+        # GEMM: n_items × n_batch = item_factors' * user_factors[:,batch]
+        scores = @view scores_buf[:, 1:n_batch]
+        mul!(scores, model.item_factors', @view(model.user_factors[:, batch_users]))
 
         # Mask seen items and get top-k per user (threaded)
         Threads.@threads for local_u in 1:n_batch
+            tid = Threads.threadid()
             global_u = batch_users[local_u]
             @inbounds for idx in nzrange(X_csr, global_u)
                 j = Int(X_csr.colval[idx])
-                scores[local_u, j] = T(-Inf)
+                scores_buf[j, local_u] = T(-Inf)
             end
-            row = @view scores[local_u, :]
-            perm = partialsortperm(row, 1:k_out; rev=true)
-            @inbounds predictions[global_u, :] .= perm
+            col = @view scores_buf[:, local_u]
+            topk = topk_bufs[tid]
+            _topk_indices!(topk, col, k_out)
+            @inbounds for i in 1:k_out
+                predictions[global_u, i] = topk[i]
+            end
         end
     end
+
+    BLAS.set_num_threads(old_blas)
     predictions
 end
 

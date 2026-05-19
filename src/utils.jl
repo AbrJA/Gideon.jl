@@ -80,3 +80,42 @@ function _inplace_shuffle!(v::AbstractVector, rng::AbstractRNG)
     end
     v
 end
+
+"""
+    _topk_indices!(topk, scores, k)
+
+Find indices of the `k` largest elements in `scores`, stored in `topk[1:k]`
+in descending order. Single O(n) pass, zero allocations.
+"""
+@inline function _topk_indices!(topk::AbstractVector{Int}, scores::AbstractVector{T}, k::Int) where T
+    n = length(scores)
+    # Initialize with first k indices, insertion-sorted descending
+    @inbounds for i in 1:k
+        topk[i] = i
+    end
+    @inbounds for i in 2:k
+        idx = topk[i]
+        val = scores[idx]
+        j = i - 1
+        while j >= 1 && scores[topk[j]] < val
+            topk[j + 1] = topk[j]
+            j -= 1
+        end
+        topk[j + 1] = idx
+    end
+    @inbounds threshold = scores[topk[k]]
+    # Single pass: maintain sorted top-k
+    @inbounds for i in (k + 1):n
+        s = scores[i]
+        if s > threshold
+            j = k - 1
+            while j >= 1 && scores[topk[j]] < s
+                topk[j + 1] = topk[j]
+                j -= 1
+            end
+            topk[j + 1] = i
+            threshold = scores[topk[k]]
+        end
+    end
+    nothing
+end

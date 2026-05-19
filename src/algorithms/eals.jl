@@ -312,15 +312,17 @@ function _eals_update_users!(U::Matrix{T}, V::Matrix{T},
                 v_jf = V[f, j]
                 cj = c_items[j]
 
-                # Observed confidence: use 1 + cj as the weight for observed
+                # Observed confidence: c_obs = 1 + cj
+                # Correction vs missing weight: c_diff = c_obs - cj = 1
                 c_obs = one(T) + cj
-                c_diff = c_obs - cj  # = 1.0 (difference vs missing weight)
 
-                # Residual without factor f: r_uj - (pred - u_f * v_jf)
-                residual_no_f = r_uj - (buf[pos] - U[f, u] * v_jf)
+                # pred_no_f = prediction without factor f contribution
+                pred_no_f = buf[pos] - U[f, u] * v_jf
 
-                numer += c_diff * v_jf * residual_no_f + cj * v_jf * residual_no_f
-                denom += c_diff * v_jf^2
+                # Correct formula: c_obs * r_uj - c_diff * pred_no_f
+                # where c_diff = 1 (not c_obs!)
+                numer += v_jf * (c_obs * r_uj - pred_no_f)
+                denom += v_jf^2  # c_diff = 1
             end
 
             # Compute SV contribution to numerator (missing data)
@@ -401,11 +403,13 @@ function _eals_update_items!(V::Matrix{T}, U::Matrix{T},
                 r_uj = T(nz[idx])
                 u_uf = U[f, u]
                 c_obs = one(T) + cj
-                c_diff = c_obs - cj  # = 1.0
 
-                residual_no_f = r_uj - (buf[pos] - V[f, j] * u_uf)
-                numer += (c_diff * u_uf * residual_no_f + cj * u_uf * residual_no_f)
-                denom += c_diff * u_uf^2
+                # pred_no_f = prediction without factor f
+                pred_no_f = buf[pos] - V[f, j] * u_uf
+
+                # Correct formula: c_obs * r_uj - c_diff * pred_no_f (c_diff=1)
+                numer += u_uf * (c_obs * r_uj - pred_no_f)
+                denom += u_uf^2  # c_diff = 1
             end
 
             old_val = V[f, j]
@@ -498,16 +502,42 @@ function predict(model::EALS{T}, X::SparseMatrixCSC; k::Int=10) where {T}
     preds = Matrix{Int}(undef, n_users, k_out)
     X_csr = to_csr(X)
 
-    Threads.@threads for u in 1:n_users
-        # Compute scores for this user: V' * u_vec (n_items vector)
-        scores = model.item_factors' * @view(model.user_factors[:, u])
-        # Mask seen items
-        @inbounds for idx in nzrange(X_csr, u)
-            j = Int(X_csr.colval[idx])
-            scores[j] = T(-Inf)
+    # Batched GEMM approach (much faster than per-user GEMV)
+    max_batch_mem = 2 * 1024^3
+    batch_size = max(1, min(n_users, Int(floor(max_batch_mem / (n_items * sizeof(T))))))
+
+    nt = Threads.maxthreadid()
+    topk_bufs = [Vector{Int}(undef, k_out) for _ in 1:nt]
+    scores_buf = Matrix{T}(undef, n_items, batch_size)
+
+    old_blas = BLAS.get_num_threads()
+    BLAS.set_num_threads(Threads.nthreads())
+
+    for batch_start in 1:batch_size:n_users
+        batch_end = min(batch_start + batch_size - 1, n_users)
+        batch_users = batch_start:batch_end
+        n_batch = length(batch_users)
+
+        scores = @view scores_buf[:, 1:n_batch]
+        mul!(scores, model.item_factors', @view(model.user_factors[:, batch_users]))
+
+        Threads.@threads for local_u in 1:n_batch
+            tid = Threads.threadid()
+            global_u = batch_users[local_u]
+            @inbounds for idx in nzrange(X_csr, global_u)
+                j = Int(X_csr.colval[idx])
+                scores_buf[j, local_u] = T(-Inf)
+            end
+            col = @view scores_buf[:, local_u]
+            topk = topk_bufs[tid]
+            _topk_indices!(topk, col, k_out)
+            @inbounds for i in 1:k_out
+                preds[global_u, i] = topk[i]
+            end
         end
-        preds[u, :] .= partialsortperm(scores, 1:k_out; rev=true)
     end
+
+    BLAS.set_num_threads(old_blas)
     preds
 end
 

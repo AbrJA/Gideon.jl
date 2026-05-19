@@ -169,16 +169,43 @@ function predict(model::LMF{T}, X::SparseMatrixCSC; k::Int = 10) where {T}
     predictions = Matrix{Int}(undef, n_users, k_actual)
 
     X_csr = to_csr(X)
-    Threads.@threads for u in 1:n_users
-        # Compute scores for this user only
-        scores = model.item_factors' * @view(model.user_factors[:, u])
-        # Mask seen items
-        @inbounds for idx in nzrange(X_csr, u)
-            j = Int(X_csr.colval[idx])
-            scores[j] = T(-Inf)
+
+    # Batched GEMM approach
+    max_batch_mem = 2 * 1024^3
+    batch_size = max(1, min(n_users, Int(floor(max_batch_mem / (n_items * sizeof(T))))))
+
+    nt = Threads.maxthreadid()
+    topk_bufs = [Vector{Int}(undef, k_actual) for _ in 1:nt]
+    scores_buf = Matrix{T}(undef, n_items, batch_size)
+
+    old_blas = BLAS.get_num_threads()
+    BLAS.set_num_threads(Threads.nthreads())
+
+    for batch_start in 1:batch_size:n_users
+        batch_end = min(batch_start + batch_size - 1, n_users)
+        batch_users = batch_start:batch_end
+        n_batch = length(batch_users)
+
+        scores = @view scores_buf[:, 1:n_batch]
+        mul!(scores, model.item_factors', @view(model.user_factors[:, batch_users]))
+
+        Threads.@threads for local_u in 1:n_batch
+            tid = Threads.threadid()
+            global_u = batch_users[local_u]
+            @inbounds for idx in nzrange(X_csr, global_u)
+                j = Int(X_csr.colval[idx])
+                scores_buf[j, local_u] = T(-Inf)
+            end
+            col = @view scores_buf[:, local_u]
+            topk = topk_bufs[tid]
+            _topk_indices!(topk, col, k_actual)
+            @inbounds for i in 1:k_actual
+                predictions[global_u, i] = topk[i]
+            end
         end
-        @inbounds predictions[u, :] .= partialsortperm(scores, 1:k_actual; rev=true)
     end
+
+    BLAS.set_num_threads(old_blas)
     predictions
 end
 
