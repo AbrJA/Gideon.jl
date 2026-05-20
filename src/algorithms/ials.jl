@@ -137,10 +137,10 @@ function fit!(model::IALS{T}, X::SparseMatrixCSC{Tv,Ti};
     r_bufs = [Vector{T}(undef, k) for _ in 1:nt]
     p_bufs = [Vector{T}(undef, k) for _ in 1:nt]
     Ap_bufs = [Vector{T}(undef, k) for _ in 1:nt]
-    # Batched gather buffers: Z (k × max_nnz_per_entity), w (max_nnz_per_entity)
+    # Batched gather buffers: Z (k × max_nnz_per_entity), w (2*max_nnz_per_entity for CG temp)
     max_nnz = max(maximum(diff(X.colptr)), maximum(diff(X_csr.rowptr)))
     Z_bufs = [Matrix{T}(undef, k, max_nnz) for _ in 1:nt]
-    w_bufs = [Vector{T}(undef, max_nnz) for _ in 1:nt]
+    w_bufs = [Vector{T}(undef, 2 * max_nnz) for _ in 1:nt]
 
     use_cg = model.solver == :cg
     cg_steps = model.cg_steps
@@ -333,7 +333,7 @@ function _ials_update_factors_cg!(target::Matrix{T}, source::Matrix{T},
     colval = R.colval
     nzval = R.nzval
 
-    # Gramian = SᵀS + λI (full symmetric for symv)
+    # Gramian = SᵀS + λI (full symmetric for gemv)
     gramian = Matrix{T}(undef, k, k)
     BLAS.syrk!('U', 'N', one(T), source, zero(T), gramian)
     LinearAlgebra.copytri!(gramian, 'U')
@@ -347,35 +347,46 @@ function _ials_update_factors_cg!(target::Matrix{T}, source::Matrix{T},
         r = r_bufs[tid]
         p = p_bufs[tid]
         Ap = Ap_bufs[tid]
+        Z = Z_bufs[tid]
+        w = w_bufs[tid]
 
-        # Compute b = Σ (1 + c_ui) * y_i
+        # Gather item vectors and confidence weights for this user
+        m = 0
         fill!(b, zero(T))
         @inbounds for idx in nzrange(R, u)
+            m += 1
             i = Int(colval[idx])
             c_ui = α * T(nzval[idx])
+            w[m] = c_ui
             coeff = one(T) + c_ui
             @simd for f in 1:k
-                b[f] += coeff * source[f, i]
+                Z[f, m] = source[f, i]
+                b[f] += coeff * Z[f, m]
             end
         end
 
-        # CG solve with warm-start and implicit A*v
+        # CG solve with warm-start
         x = @view target[:, u]
 
-        # r = b - A*x where A*x = gramian*x + Σ c_ui * y_i * (y_iᵀ * x)
-        BLAS.gemv!('N', one(T), gramian, x, zero(T), r)
-        @inbounds for idx in nzrange(R, u)
-            i = Int(colval[idx])
-            c_ui = α * T(nzval[idx])
-            d = zero(T)
-            @simd for f in 1:k
-                d += source[f, i] * x[f]
-            end
-            cd = c_ui * d
-            @simd for f in 1:k
-                r[f] += cd * source[f, i]
-            end
+        if m == 0
+            # No interactions: solve gramian * x = 0 → x = 0
+            fill!(x, zero(T))
+            continue
         end
+
+        Zm = @view Z[:, 1:m]
+        wm = @view w[1:m]
+
+        # r = b - A*x where A*x = gramian*x + Z * diag(w) * Z^T * x
+        BLAS.gemv!('N', one(T), gramian, x, zero(T), r)
+        # Sparse correction via gathered BLAS: tmp = Z^T * x, tmp .*= w, r += Z * tmp
+        tmp_m = @view w[m+1:2m]
+        BLAS.gemv!('T', one(T), Zm, x, zero(T), tmp_m)
+        @inbounds @simd for j in 1:m
+            tmp_m[j] *= wm[j]
+        end
+        BLAS.gemv!('N', one(T), Zm, tmp_m, one(T), r)
+
         @inbounds @simd for f in 1:k
             r[f] = b[f] - r[f]
             p[f] = r[f]
@@ -383,20 +394,13 @@ function _ials_update_factors_cg!(target::Matrix{T}, source::Matrix{T},
         rs_old = dot(r, r)
 
         for _ in 1:cg_steps
-            # Ap = A*p (implicit)
+            # Ap = A*p = gramian*p + Z * diag(w) * Z^T * p
             BLAS.gemv!('N', one(T), gramian, p, zero(T), Ap)
-            @inbounds for idx in nzrange(R, u)
-                i = Int(colval[idx])
-                c_ui = α * T(nzval[idx])
-                d = zero(T)
-                @simd for f in 1:k
-                    d += source[f, i] * p[f]
-                end
-                cd = c_ui * d
-                @simd for f in 1:k
-                    Ap[f] += cd * source[f, i]
-                end
+            BLAS.gemv!('T', one(T), Zm, p, zero(T), tmp_m)
+            @inbounds @simd for j in 1:m
+                tmp_m[j] *= wm[j]
             end
+            BLAS.gemv!('N', one(T), Zm, tmp_m, one(T), Ap)
 
             pAp = dot(p, Ap)
             pAp < eps(T) && break
@@ -443,32 +447,43 @@ function _ials_update_factors_cg!(target::Matrix{T}, source::Matrix{T},
         r = r_bufs[tid]
         p = p_bufs[tid]
         Ap = Ap_bufs[tid]
+        Z = Z_bufs[tid]
+        w = w_bufs[tid]
 
+        # Gather item vectors and confidence weights
+        m = 0
         fill!(b, zero(T))
         @inbounds for idx in nzrange(R, j)
+            m += 1
             i = Int(rv[idx])
             c_ui = α * T(nz[idx])
+            w[m] = c_ui
             coeff = one(T) + c_ui
             @simd for f in 1:k
-                b[f] += coeff * source[f, i]
+                Z[f, m] = source[f, i]
+                b[f] += coeff * Z[f, m]
             end
         end
 
         x = @view target[:, j]
 
-        BLAS.gemv!('N', one(T), gramian, x, zero(T), r)
-        @inbounds for idx in nzrange(R, j)
-            i = Int(rv[idx])
-            c_ui = α * T(nz[idx])
-            d = zero(T)
-            @simd for f in 1:k
-                d += source[f, i] * x[f]
-            end
-            cd = c_ui * d
-            @simd for f in 1:k
-                r[f] += cd * source[f, i]
-            end
+        if m == 0
+            fill!(x, zero(T))
+            continue
         end
+
+        Zm = @view Z[:, 1:m]
+        wm = @view w[1:m]
+        tmp_m = @view w[m+1:2m]
+
+        # r = b - A*x
+        BLAS.gemv!('N', one(T), gramian, x, zero(T), r)
+        BLAS.gemv!('T', one(T), Zm, x, zero(T), tmp_m)
+        @inbounds @simd for jj in 1:m
+            tmp_m[jj] *= wm[jj]
+        end
+        BLAS.gemv!('N', one(T), Zm, tmp_m, one(T), r)
+
         @inbounds @simd for f in 1:k
             r[f] = b[f] - r[f]
             p[f] = r[f]
@@ -476,19 +491,13 @@ function _ials_update_factors_cg!(target::Matrix{T}, source::Matrix{T},
         rs_old = dot(r, r)
 
         for _ in 1:cg_steps
+            # Ap = A*p = gramian*p + Z * diag(w) * Z^T * p
             BLAS.gemv!('N', one(T), gramian, p, zero(T), Ap)
-            @inbounds for idx in nzrange(R, j)
-                i = Int(rv[idx])
-                c_ui = α * T(nz[idx])
-                d = zero(T)
-                @simd for f in 1:k
-                    d += source[f, i] * p[f]
-                end
-                cd = c_ui * d
-                @simd for f in 1:k
-                    Ap[f] += cd * source[f, i]
-                end
+            BLAS.gemv!('T', one(T), Zm, p, zero(T), tmp_m)
+            @inbounds @simd for jj in 1:m
+                tmp_m[jj] *= wm[jj]
             end
+            BLAS.gemv!('N', one(T), Zm, tmp_m, one(T), Ap)
 
             pAp = dot(p, Ap)
             pAp < eps(T) && break

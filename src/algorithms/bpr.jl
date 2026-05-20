@@ -320,24 +320,6 @@ function _bpr_sample_negative_fast(rng::AbstractRNG, n_items::Int,
 end
 
 """
-Binary search in a sorted Int32 vector. O(log n) and cache-friendly.
-"""
-@inline function _insorted(sorted::Vector{Int32}, val::Int32)
-    lo, hi = 1, length(sorted)
-    @inbounds while lo <= hi
-        mid = (lo + hi) >>> 1
-        if sorted[mid] < val
-            lo = mid + 1
-        elseif sorted[mid] > val
-            hi = mid - 1
-        else
-            return true
-        end
-    end
-    return false
-end
-
-"""
 Legacy: Sample a negative item according to the specified strategy.
 Kept for backward compatibility with tests.
 """

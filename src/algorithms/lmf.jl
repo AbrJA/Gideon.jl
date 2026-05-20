@@ -54,101 +54,157 @@ function LMF(;
     n_negative::Int = 4,
     convergence_tol::Float64 = -1.0,
     verbose::Bool = true,
+    dtype::Type{<:AbstractFloat} = Float64,
 )
     @assert rank >= 1 "rank must be ≥ 1"
     @assert λ >= 0.0 "λ must be non-negative"
     @assert learning_rate > 0.0 "learning_rate must be positive"
     @assert n_negative >= 1 "n_negative must be ≥ 1"
-    LMF{Float64}(rank, λ, α, learning_rate, max_iter, n_negative, convergence_tol,
-                 verbose, Matrix{Float64}(undef,0,0), Matrix{Float64}(undef,0,0), false)
+    Td = dtype
+    LMF{Td}(rank, Td(λ), Td(α), Td(learning_rate), max_iter, n_negative, Td(convergence_tol),
+            verbose, Matrix{Td}(undef,0,0), Matrix{Td}(undef,0,0), false)
 end
 
 """
     fit!(model::LMF, X; rng) -> model
 
 Fit the LMF model on user-item interaction matrix `X` (n_users × n_items).
+Uses Hogwild!-style lock-free parallel SGD with per-interaction negative sampling.
 """
 function fit!(model::LMF{T}, X::SparseMatrixCSC{Tv,Ti};
               rng::AbstractRNG = Random.default_rng()) where {T,Tv,Ti}
     n_users, n_items = size(X)
     k = model.rank
 
-    model.user_factors = randn(rng, T, k, n_users) .* T(0.01)
-    model.item_factors = randn(rng, T, k, n_items) .* T(0.01)
+    # Xavier initialization — scale ~ 1/sqrt(rank)
+    scale = T(1.0 / sqrt(k))
+    model.user_factors = randn(rng, T, k, n_users) .* scale
+    model.item_factors = randn(rng, T, k, n_items) .* scale
 
-    rv = rowvals(X)
-    nz = nonzeros(X)
+    U = model.user_factors
+    V = model.item_factors
+
+    # Build flat sampling structure (like BPR) — sample (user, pos_item) uniformly
+    X_csr = to_csr(X)
+    n_interactions = nnz(X)
+
+    userids = Vector{Int32}(undef, n_interactions)
+    itemids = Vector{Int32}(undef, n_interactions)
+    conf_vals = Vector{T}(undef, n_interactions)  # confidence values
+    pos = 1
+    for u in 1:n_users
+        for idx in nzrange(X_csr, u)
+            userids[pos] = Int32(u)
+            itemids[pos] = Int32(X_csr.colval[idx])
+            conf_vals[pos] = T(X_csr.nzval[idx])
+            pos += 1
+        end
+    end
+
+    # Build sorted item lists per user for negative sampling
+    user_item_sorted = Vector{Vector{Int32}}(undef, n_users)
+    for u in 1:n_users
+        items = Int32[]
+        for idx in nzrange(X_csr, u)
+            push!(items, Int32(X_csr.colval[idx]))
+        end
+        sort!(items)
+        user_item_sorted[u] = items
+    end
+
+    lr = model.learning_rate
+    λ  = model.λ
+    α  = model.α
+    n_neg = model.n_negative
+    samples_per_epoch = n_interactions
 
     monitor = ConvergenceMonitor{T}(tol=T(model.convergence_tol), min_iter=2)
 
-    for iter in 1:model.max_iter
-        iter_start = time_ns()
-        total_loss = zero(T)
+    # Per-thread RNGs
+    nt = Threads.nthreads()
+    thread_rngs = [Random.Xoshiro(rand(rng, UInt64)) for _ in 1:nt]
 
-        for j in axes(X, 2)
-            for idx in nzrange(X, j)
-                u   = rv[idx]
-                r   = T(nz[idx])
-                c   = one(T) + model.α * r
+    for epoch in 1:model.max_iter
+        epoch_start = time_ns()
 
-                s  = zero(T)
-                @inbounds @simd for f in 1:k
-                    s += model.user_factors[f, u] * model.item_factors[f, j]
+        # Hogwild! parallel SGD
+        epoch_losses = zeros(T, nt)
+
+        Threads.@threads :static for chunk in 1:nt
+            local_rng = thread_rngs[chunk]
+            local_loss = zero(T)
+            chunk_size = cld(samples_per_epoch, nt)
+            chunk_start = (chunk - 1) * chunk_size + 1
+            chunk_end = min(chunk * chunk_size, samples_per_epoch)
+
+            @fastmath @inbounds for _ in chunk_start:chunk_end
+                # Sample a random positive interaction
+                liked_index = rand(local_rng, 1:n_interactions)
+                u = Int(userids[liked_index])
+                i = Int(itemids[liked_index])
+                r = conf_vals[liked_index]
+                c = one(T) + α * r
+
+                # ── Positive update: grad = c * (1 - σ(s)) ──
+                # Johnson (2014): maximize c * log σ(s) for positive pairs
+                s = zero(T)
+                @simd for f in 1:k
+                    s += U[f, u] * V[f, i]
+                end
+                σ_s = one(T) / (one(T) + exp(-s))
+                grad_pos = c * (one(T) - σ_s)
+
+                for f in 1:k
+                    u_f = U[f, u]
+                    i_f = V[f, i]
+                    U[f, u] = u_f + lr * (grad_pos * i_f - λ * u_f)
+                    V[f, i] = i_f + lr * (grad_pos * u_f - λ * i_f)
                 end
 
-                σ_s = sigmoid(s)
-                grad_mult = r - c * σ_s
+                local_loss -= c * log1pexp(-s)
 
-                lr = model.learning_rate
-                λ  = model.λ
-                U = model.user_factors
-                V = model.item_factors
+                # ── Negative sampling: sample items user hasn't seen ──
+                # Johnson (2014): maximize log(1 - σ(s)) for negative pairs
+                local sorted_items = user_item_sorted[u]
+                for _ in 1:n_neg
+                    j = rand(local_rng, Int32(1):Int32(n_items))
+                    while _insorted(sorted_items, j)
+                        j = rand(local_rng, Int32(1):Int32(n_items))
+                    end
+                    j_int = Int(j)
 
-                @inbounds @simd for f in 1:k
-                    gu = grad_mult * V[f, j] - λ * U[f, u]
-                    gi = grad_mult * U[f, u] - λ * V[f, j]
-                    U[f, u] += lr * gu
-                    V[f, j] += lr * gi
+                    # Negative gradient: -σ(s_neg)
+                    s_neg = zero(T)
+                    @simd for f in 1:k
+                        s_neg += U[f, u] * V[f, j_int]
+                    end
+                    σ_neg = one(T) / (one(T) + exp(-s_neg))
+
+                    for f in 1:k
+                        u_f = U[f, u]
+                        j_f = V[f, j_int]
+                        U[f, u] = u_f + lr * (-σ_neg * j_f - λ * u_f)
+                        V[f, j_int] = j_f + lr * (-σ_neg * u_f - λ * j_f)
+                    end
+
+                    local_loss -= log1pexp(s_neg)
                 end
-
-                total_loss += r * s - c * log1pexp(s)
             end
 
-            # Negative sampling
-            for _ in 1:model.n_negative
-                u_neg = rand(rng, 1:n_users)
-                s  = zero(T)
-                @inbounds @simd for f in 1:k
-                    s += model.user_factors[f, u_neg] * model.item_factors[f, j]
-                end
-                σ_s = sigmoid(s)
-
-                lr = model.learning_rate
-                λ  = model.λ
-                U = model.user_factors
-                V = model.item_factors
-
-                @inbounds @simd for f in 1:k
-                    gu = -σ_s * V[f, j] - λ * U[f, u_neg]
-                    gi = -σ_s * U[f, u_neg] - λ * V[f, j]
-                    U[f, u_neg] += lr * gu
-                    V[f, j]     += lr * gi
-                end
-                total_loss -= log1pexp(s)
-            end
+            epoch_losses[chunk] = local_loss
         end
 
-        total_loss -= model.λ / 2 * (sum(abs2, model.user_factors) + sum(abs2, model.item_factors))
+        total_loss = sum(epoch_losses) / samples_per_epoch
 
-        iter_seconds = (time_ns() - iter_start) / 1e9
+        iter_seconds = (time_ns() - epoch_start) / 1e9
         total_seconds = elapsed_seconds(monitor)
         if model.verbose
-            log_iteration("LMF", iter, model.max_iter, Float64(total_loss),
+            log_iteration("LMF", epoch, model.max_iter, Float64(total_loss),
                          iter_seconds, total_seconds)
         end
 
         if record!(monitor, total_loss)
-            model.verbose && @info "[LMF] converged at iteration $iter"
+            model.verbose && @info "[LMF] converged at iteration $epoch"
             break
         end
     end

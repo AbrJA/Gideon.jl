@@ -82,16 +82,18 @@ function WRMF(;
     cg_steps::Int = 3,
     feedback::FeedbackType = IMPLICIT,
     verbose::Bool = true,
+    dtype::Type{<:AbstractFloat} = Float64,
 )
     @assert rank >= 1 "rank must be ≥ 1"
     @assert λ >= 0.0 "λ must be non-negative"
     @assert α >= 0.0 "α must be non-negative"
     @assert max_iter >= 1 "max_iter must be ≥ 1"
     @assert cg_steps >= 1 "cg_steps must be ≥ 1"
-    WRMF{Float64}(
-        rank, λ, α, max_iter, convergence_tol, solver, cg_steps, feedback, verbose,
-        Matrix{Float64}(undef, 0, 0),
-        Matrix{Float64}(undef, 0, 0),
+    T = dtype
+    WRMF{T}(
+        rank, T(λ), T(α), max_iter, T(convergence_tol), solver, cg_steps, feedback, verbose,
+        Matrix{T}(undef, 0, 0),
+        Matrix{T}(undef, 0, 0),
         false,
     )
 end

@@ -86,13 +86,14 @@ function EALS(;
     convergence_tol::Float64 = 0.005,
     popularity_exponent::Float64 = 0.5,
     verbose::Bool = true,
+    dtype::Type{<:AbstractFloat} = Float64,
 )
     @assert rank >= 1
     @assert λ >= 0.0
     @assert w0 > 0.0
     @assert popularity_exponent >= 0.0
-    T = Float64
-    EALS{T}(rank, λ, w0, max_iter, convergence_tol, popularity_exponent, verbose,
+    T = dtype
+    EALS{T}(rank, T(λ), T(w0), max_iter, T(convergence_tol), T(popularity_exponent), verbose,
             Matrix{T}(undef, 0, 0), Matrix{T}(undef, 0, 0), T[], false)
 end
 

@@ -82,6 +82,25 @@ function _inplace_shuffle!(v::AbstractVector, rng::AbstractRNG)
 end
 
 """
+Binary search in a sorted Int32 vector. O(log n) and cache-friendly.
+Used by BPR and LMF for negative sampling.
+"""
+@inline function _insorted(sorted::Vector{Int32}, val::Int32)
+    lo, hi = 1, length(sorted)
+    @inbounds while lo <= hi
+        mid = (lo + hi) >>> 1
+        if sorted[mid] < val
+            lo = mid + 1
+        elseif sorted[mid] > val
+            hi = mid - 1
+        else
+            return true
+        end
+    end
+    return false
+end
+
+"""
     _topk_indices!(topk, scores, k)
 
 Find indices of the `k` largest elements in `scores`, stored in `topk[1:k]`
