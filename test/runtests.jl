@@ -58,6 +58,9 @@ using JET
     @testset "GPU" begin
         include("test_gpu.jl")
     end
+    @testset "Coverage" begin
+        include("test_coverage.jl")
+    end
     @testset "R Correctness" begin
         include("test_r_correctness.jl")
     end

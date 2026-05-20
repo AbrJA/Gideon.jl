@@ -17,6 +17,43 @@ using CUDA.CUSPARSE
 using CUDA.CUBLAS
 using LinearAlgebra
 using SparseArrays
+using Random
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Helper kernels for diagonal operations on GPU
+# ──────────────────────────────────────────────────────────────────────────────
+
+function _gpu_diag_add_kernel!(A, val)
+    i = threadIdx().x + (blockIdx().x - 1) * blockDim().x
+    if i <= min(size(A, 1), size(A, 2))
+        @inbounds A[i, i] += val
+    end
+    return nothing
+end
+
+function _gpu_diag_zero_kernel!(A)
+    i = threadIdx().x + (blockIdx().x - 1) * blockDim().x
+    if i <= min(size(A, 1), size(A, 2))
+        @inbounds A[i, i] = zero(eltype(A))
+    end
+    return nothing
+end
+
+function _gpu_add_to_diag!(A::CuMatrix{T}, val) where T
+    n = min(size(A, 1), size(A, 2))
+    threads = min(256, n)
+    blocks = cld(n, threads)
+    @cuda threads=threads blocks=blocks _gpu_diag_add_kernel!(A, T(val))
+    return A
+end
+
+function _gpu_set_diag_zero!(A::CuMatrix)
+    n = min(size(A, 1), size(A, 2))
+    threads = min(256, n)
+    blocks = cld(n, threads)
+    @cuda threads=threads blocks=blocks _gpu_diag_zero_kernel!(A)
+    return A
+end
 
 # ──────────────────────────────────────────────────────────────────────────────
 # GPU-accelerated EASE
@@ -34,7 +71,7 @@ function Gideon.fit_gpu!(model::Gideon.EASE{T}, X::SparseMatrixCSC{Tv,Ti}) where
     model.verbose && @info "[EASE-GPU] Transferring data to GPU ($(n_items) items)..."
 
     # Check available GPU memory
-    free_mem = CUDA.available_memory()
+    free_mem = CUDA.free_memory()
     estimated_mem = sizeof(T) * n_items * n_items * 3
 
     if estimated_mem > free_mem * 0.8
@@ -50,8 +87,8 @@ function Gideon.fit_gpu!(model::Gideon.EASE{T}, X::SparseMatrixCSC{Tv,Ti}) where
     GC.gc(false)
     CUDA.reclaim()
 
-    # Add regularization
-    @. G_gpu[diagind(G_gpu)] += model.λ
+    # Add regularization to diagonal
+    _gpu_add_to_diag!(G_gpu, model.λ)
 
     model.verbose && @info "[EASE-GPU] Computing Cholesky inverse on GPU..."
 
@@ -62,15 +99,20 @@ function Gideon.fit_gpu!(model::Gideon.EASE{T}, X::SparseMatrixCSC{Tv,Ti}) where
     CUDA.reclaim()
 
     # Compute B: B_ij = -P_ij / P_jj, B_ii = 0
-    B_gpu = -P_gpu
-    diag_P = CUDA.zeros(T, n_items)
-    copyto!(diag_P, view(P_gpu, diagind(P_gpu)))
-    for j in 1:n_items
-        B_gpu[:, j] ./= diag_P[j]
-    end
-    @. B_gpu[diagind(B_gpu)] = zero(T)
+    P = Array(P_gpu)
+    P_gpu = nothing
+    CUDA.reclaim()
 
-    model.B = Array(B_gpu)
+    diag_P = diag(P)
+    B = -P
+    for j in 1:n_items
+        B[:, j] ./= diag_P[j]
+    end
+    @inbounds for j in 1:n_items
+        B[j, j] = zero(T)
+    end
+
+    model.B = B
     model.is_fitted = true
     model.verbose && @info "[EASE-GPU] Done."
     model
@@ -107,8 +149,10 @@ function Gideon.fit_gpu!(model::Gideon.IALS{T}, X::SparseMatrixCSC{Tv,Ti};
         # Compute Gramian on GPU: V*V' + λI
         V_gpu = CuMatrix{T}(V)
         gramian_gpu = V_gpu * V_gpu'
-        @. gramian_gpu[diagind(gramian_gpu)] += λ
         gramian = Array(gramian_gpu)
+        @inbounds for i in 1:k
+            gramian[i, i] += λ
+        end
 
         # Update users with GPU-computed Gramian
         _gpu_ials_update!(U, V, X_csr, gramian, α, k,
@@ -119,8 +163,10 @@ function Gideon.fit_gpu!(model::Gideon.IALS{T}, X::SparseMatrixCSC{Tv,Ti};
         # Compute Gramian for item update
         U_gpu = CuMatrix{T}(U)
         gramian_gpu = U_gpu * U_gpu'
-        @. gramian_gpu[diagind(gramian_gpu)] += λ
         gramian = Array(gramian_gpu)
+        @inbounds for i in 1:k
+            gramian[i, i] += λ
+        end
 
         # Update items
         _gpu_ials_update!(V, U, X, gramian, α, k,
