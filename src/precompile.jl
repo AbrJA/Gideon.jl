@@ -1,0 +1,95 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Precompilation workloads — reduce TTFX for common workflows
+# ──────────────────────────────────────────────────────────────────────────────
+
+import PrecompileTools: @setup_workload, @compile_workload
+
+@setup_workload begin
+    using SparseArrays, Random
+
+    @compile_workload begin
+        rng = MersenneTwister(1)
+        n_users, n_items = 20, 15
+
+        # Small sparse matrix for precompilation
+        X_small = sprand(rng, n_users, n_items, 0.3)
+
+        # WRMF with CG solver
+        m_cg = WRMF(rank=4, λ=0.1, α=1.0, max_iter=2, solver=CONJUGATE_GRADIENT, verbose=false)
+        fit!(m_cg, X_small; rng=MersenneTwister(2))
+        predict(m_cg, X_small; k=3)
+        transform(m_cg, X_small)
+
+        # WRMF with Cholesky solver
+        m_ch = WRMF(rank=4, λ=0.1, α=1.0, max_iter=2, solver=CHOLESKY, verbose=false)
+        fit!(m_ch, X_small; rng=MersenneTwister(3))
+
+        # iALS
+        m_ials = IALS(rank=4, λ=0.01, α=10.0, max_iter=2, verbose=false)
+        fit!(m_ials, X_small; rng=MersenneTwister(4))
+        predict(m_ials, X_small; k=3)
+
+        # BPR
+        m_bpr = BPR(rank=4, max_iter=2, n_samples=20, verbose=false)
+        fit!(m_bpr, X_small; rng=MersenneTwister(5))
+        predict(m_bpr, X_small; k=3)
+
+        # EASE
+        m_ease = EASE(λ=100.0, verbose=false)
+        fit!(m_ease, X_small)
+        predict(m_ease, X_small; k=3)
+
+        # SLIM
+        m_slim = SLIM(λ₁=0.1, λ₂=0.5, max_iter=5, verbose=false)
+        fit!(m_slim, X_small)
+        predict(m_slim, X_small; k=3)
+
+        # GloVe (square matrix)
+        C = sprand(rng, 10, 10, 0.5)
+        C = C + C'
+        nonzeros(C) .= abs.(nonzeros(C)) .+ 0.1
+        m_glove = GloVe(rank=4, max_iter=2, verbose=false)
+        fit!(m_glove, C; rng=MersenneTwister(6))
+        get_embeddings(m_glove)
+
+        # LMF
+        m_lmf = LMF(rank=4, max_iter=2, verbose=false)
+        fit!(m_lmf, X_small; rng=MersenneTwister(7))
+
+        # FTRL
+        y_small = rand(rng, n_users)
+        m_ftrl = FTRL(learning_rate=0.1, verbose=false)
+        partial_fit!(m_ftrl, X_small, y_small; rng=MersenneTwister(8))
+        predict(m_ftrl, X_small)
+
+        # FM
+        m_fm = FactorizationMachine(rank=2, n_iter=2, verbose=false)
+        fit!(m_fm, X_small, y_small; rng=MersenneTwister(9))
+        predict(m_fm, X_small)
+
+        # SoftImpute
+        soft_impute(X_small; rank=3, max_iter=3, verbose=false)
+
+        # Metrics
+        preds_small = Matrix{Int}(hcat([randperm(rng, n_items)[1:3] for _ in 1:n_users]...)')
+        actual_small = sprand(rng, n_users, n_items, 0.2)
+        map_at_k(preds_small, actual_small; k=3)
+        ndcg_at_k(preds_small, actual_small; k=3)
+        precision_at_k(preds_small, actual_small; k=3)
+        recall_at_k(preds_small, actual_small; k=3)
+
+        # Cross-validation
+        temporal_split(X_small; test_fraction=0.3, rng=MersenneTwister(10))
+
+        # Serialization
+        tmpf = tempname() * ".jls"
+        save_model(m_ease, tmpf)
+        load_model(tmpf)
+        rm(tmpf; force=true)
+
+        # Sparse utilities
+        to_csr(X_small)
+        sparse_row_norms(X_small)
+        sparse_col_nnz(X_small)
+    end
+end
