@@ -18,7 +18,7 @@ end
     X = sprand(rng, 50, 30, 0.1)
     model = EASE(λ=100.0, verbose=false)
     fit!(model, X)
-    preds = predict(model, X; k=5)
+    preds = recommend(model, X; k=5)
     @test size(preds) == (50, 5)
     @test all(preds .>= 1)
     @test all(preds .<= 30)
@@ -29,7 +29,7 @@ end
     X = sprand(rng, 30, 20, 0.1)
     model = EASE(λ=100.0, verbose=false)
     fit!(model, X)
-    S = predict_scores(model, X)
+    S = score(model, X)
     @test size(S) == (30, 20)
     @test all(isfinite, S)
 end

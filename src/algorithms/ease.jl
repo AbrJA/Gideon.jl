@@ -42,10 +42,10 @@ using SparseArrays, Gideon
 X = sprand(1000, 500, 0.02)  # users × items
 model = EASE(λ=200.0)
 fit!(model, X)
-preds = predict(model, X; k=10)
+preds = recommend(model, X; k=10)
 ```
 """
-mutable struct EASE{T<:AbstractFloat} <: AbstractSparseModel
+mutable struct EASE{T<:AbstractFloat} <: AbstractItemSimilarity
     const λ::T
     const verbose::Bool
     B::Matrix{T}
@@ -110,12 +110,12 @@ end
 # ──────────────────────────────────────────────────────────────────────────────
 
 """
-    predict(model::EASE, X; k=10) -> Matrix{Int}
+    recommend(model::EASE, X; k=10) -> Matrix{Int}
 
 Return top-k item indices per user. Scores are computed as X * B.
 Already-interacted items are excluded.
 """
-function predict(model::EASE{T}, X::SparseMatrixCSC; k::Int=10) where {T}
+function recommend(model::EASE{T}, X::SparseMatrixCSC; k::Int=10) where {T}
     model.is_fitted || error("Model not fitted")
     n_users = size(X, 1)
     n_items = size(model.B, 1)
@@ -148,11 +148,11 @@ function predict(model::EASE{T}, X::SparseMatrixCSC; k::Int=10) where {T}
 end
 
 """
-    predict_scores(model::EASE, X) -> Matrix{T}
+    score(model::EASE, X) -> Matrix{T}
 
 Return the full score matrix S = X * B (dense, n_users × n_items).
 """
-function predict_scores(model::EASE{T}, X::SparseMatrixCSC) where {T}
+function score(model::EASE{T}, X::SparseMatrixCSC) where {T}
     model.is_fitted || error("Model not fitted")
     Matrix{T}(X * model.B)
 end

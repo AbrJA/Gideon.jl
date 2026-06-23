@@ -224,3 +224,103 @@ function _predict_pairwise_scores(user_factors::Matrix{T}, item_factors::Matrix{
     end
     scores
 end
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Default recommend/score for AbstractMatrixFactorization
+# ──────────────────────────────────────────────────────────────────────────────
+# Models with user_factors/item_factors get these for free.
+# Override only when special logic is needed (e.g. WRMF transform, GloVe embeddings).
+
+function recommend(model::AbstractMatrixFactorization, X::SparseMatrixCSC; k::Int=10)
+    model.is_fitted || error("Model not fitted")
+    _predict_topk_batched(model.user_factors, model.item_factors, to_csr(X), k)
+end
+
+function score(model::AbstractMatrixFactorization, X::SparseMatrixCSC)
+    model.is_fitted || error("Model not fitted")
+    model.user_factors' * model.item_factors
+end
+
+function score(model::AbstractMatrixFactorization,
+               user_indices::AbstractVector{<:Integer},
+               item_indices::AbstractVector{<:Integer})
+    model.is_fitted || error("Model not fitted")
+    _predict_pairwise_scores(model.user_factors, model.item_factors, user_indices, item_indices)
+end
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Similarity queries
+# ──────────────────────────────────────────────────────────────────────────────
+
+"""
+    _cosine_topk(factors, query_id, k) -> (ids, scores)
+
+Find the k most similar columns to `query_id` in `factors` by cosine similarity.
+Excludes the query itself from results.
+"""
+function _cosine_topk(factors::Matrix{T}, query_id::Int, k::Int) where {T}
+    rank, n = size(factors)
+    query_id >= 1 && query_id <= n ||
+        throw(ArgumentError("query_id=$query_id out of range [1, $n]"))
+    k_out = min(k, n - 1)
+
+    # Normalize the query vector
+    q = @view factors[:, query_id]
+    q_norm = norm(q)
+    q_norm > zero(T) || return (Int[], T[])
+
+    # Compute cosine similarities
+    sims = Vector{T}(undef, n)
+    @inbounds for j in 1:n
+        if j == query_id
+            sims[j] = T(-Inf)  # exclude self
+        else
+            col_norm = zero(T)
+            dot_val = zero(T)
+            @simd for f in 1:rank
+                dot_val += factors[f, query_id] * factors[f, j]
+                col_norm += factors[f, j]^2
+            end
+            col_norm = sqrt(col_norm)
+            sims[j] = col_norm > zero(T) ? dot_val / (q_norm * col_norm) : zero(T)
+        end
+    end
+
+    # Top-k extraction
+    topk = Vector{Int}(undef, k_out)
+    _topk_indices!(topk, sims, k_out)
+    scores_out = T[sims[topk[i]] for i in 1:k_out]
+    (topk, scores_out)
+end
+
+"""
+    similar_items(model::AbstractMatrixFactorization, item_id; k=10)
+
+Find the k most similar items to `item_id` based on cosine similarity
+of item embedding vectors. Returns `(ids::Vector{Int}, scores::Vector)`.
+"""
+function similar_items(model::AbstractMatrixFactorization, item_id::Int; k::Int=10)
+    hasproperty(model, :is_fitted) && model.is_fitted || error("Model not fitted")
+    factors = if hasproperty(model, :item_factors)
+        model.item_factors
+    else
+        get_embeddings(model)
+    end
+    _cosine_topk(factors, item_id, k)
+end
+
+"""
+    similar_users(model::AbstractMatrixFactorization, user_id; k=10)
+
+Find the k most similar users to `user_id` based on cosine similarity
+of user embedding vectors. Returns `(ids::Vector{Int}, scores::Vector)`.
+"""
+function similar_users(model::AbstractMatrixFactorization, user_id::Int; k::Int=10)
+    hasproperty(model, :is_fitted) && model.is_fitted || error("Model not fitted")
+    factors = if hasproperty(model, :user_factors)
+        model.user_factors
+    else
+        get_embeddings(model)
+    end
+    _cosine_topk(factors, user_id, k)
+end

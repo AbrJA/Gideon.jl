@@ -233,3 +233,38 @@ function get_embeddings(model::GloVe{T}) where {T}
     model.is_fitted || error("Model not fitted")
     model.W_main .+ model.W_ctx
 end
+
+"""
+    recommend(model::GloVe, X; k=10) -> Matrix{Int}
+
+Return top-k most similar items per row, excluding self-interactions.
+Uses the combined GloVe embeddings for scoring.
+"""
+function recommend(model::GloVe{T}, X::SparseMatrixCSC; k::Int=10) where {T}
+    model.is_fitted || error("Model not fitted")
+    embeddings = get_embeddings(model)
+    _predict_topk_batched(embeddings, embeddings, to_csr(X), k)
+end
+
+"""
+    score(model::GloVe, X) -> Matrix
+
+Return the full score matrix using combined embeddings: E' * E.
+"""
+function score(model::GloVe{T}, X::SparseMatrixCSC) where {T}
+    model.is_fitted || error("Model not fitted")
+    E = get_embeddings(model)
+    E' * E
+end
+
+"""
+    score(model::GloVe, row_indices, col_indices) -> Vector
+
+Return pairwise similarity scores for specific (row, col) index pairs.
+"""
+function score(model::GloVe{T}, row_indices::AbstractVector{<:Integer},
+               col_indices::AbstractVector{<:Integer}) where {T}
+    model.is_fitted || error("Model not fitted")
+    E = get_embeddings(model)
+    _predict_pairwise_scores(E, E, row_indices, col_indices)
+end

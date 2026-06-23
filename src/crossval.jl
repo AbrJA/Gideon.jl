@@ -99,9 +99,9 @@ function cv_evaluate(model_fn, X::SparseMatrixCSC;
 
         model = model_fn()
         fit!(model, X_train; rng=rng)
-        preds = predict(model, X_train; k=k)
-        score = metric(preds, X_test; k=k)
-        push!(fold_scores, score)
+        preds = recommend(model, X_train; k=k)
+        metric_val = metric(preds, X_test; k=k)
+        push!(fold_scores, metric_val)
     end
 
     mean_score = sum(fold_scores) / length(fold_scores)
@@ -158,16 +158,16 @@ function grid_search(model_fn, X::SparseMatrixCSC,
         model = model_fn(params)
         try
             fit!(model, X_train; rng=rng)
-            preds = predict(model, X_train; k=k)
-            score = metric(preds, X_test; k=k)
-            push!(results, (params=params, score=score))
+            preds = recommend(model, X_train; k=k)
+            metric_val = metric(preds, X_test; k=k)
+            push!(results, (params=params, score=metric_val))
 
-            if score > best_score
-                best_score = score
+            if metric_val > best_score
+                best_score = metric_val
                 best_params = params
             end
 
-            verbose && @info "[GridSearch] $(params) → $(round(score, digits=6))"
+            verbose && @info "[GridSearch] $(params) → $(round(metric_val, digits=6))"
         catch e
             verbose && @warn "[GridSearch] $(params) failed: $(e)"
             push!(results, (params=params, score=-Inf))
@@ -222,16 +222,16 @@ function random_search(model_fn, X::SparseMatrixCSC,
         model = model_fn(params)
         try
             fit!(model, X_train; rng=rng)
-            preds = predict(model, X_train; k=k)
-            score = metric(preds, X_test; k=k)
-            push!(results, (params=params, score=score))
+            preds = recommend(model, X_train; k=k)
+            metric_val = metric(preds, X_test; k=k)
+            push!(results, (params=params, score=metric_val))
 
-            if score > best_score
-                best_score = score
+            if metric_val > best_score
+                best_score = metric_val
                 best_params = params
             end
 
-            verbose && @info "[RandomSearch $trial/$n_trials] $(params) → $(round(score, digits=6))"
+            verbose && @info "[RandomSearch $trial/$n_trials] $(params) → $(round(metric_val, digits=6))"
         catch e
             verbose && @warn "[RandomSearch $trial/$n_trials] $(params) failed: $(e)"
             push!(results, (params=params, score=-Inf))

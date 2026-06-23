@@ -27,7 +27,7 @@ end
     X = sprand(rng, 50, 40, 0.1)
     model = BPR(rank=5, learning_rate=0.05, max_iter=10, verbose=false)
     fit!(model, X; rng=rng)
-    preds = predict(model, X; k=5)
+    preds = recommend(model, X; k=5)
     @test size(preds) == (50, 5)
     @test all(preds .>= 1)
     @test all(preds .<= 40)
@@ -38,7 +38,7 @@ end
     X = sprand(rng, 30, 20, 0.1)
     model = BPR(rank=4, learning_rate=0.05, max_iter=5, verbose=false)
     fit!(model, X; rng=rng)
-    scores = predict_scores(model, [1, 2, 3], [1, 2, 3])
+    scores = score(model, [1, 2, 3], [1, 2, 3])
     @test length(scores) == 3
     @test all(isfinite, scores)
 end

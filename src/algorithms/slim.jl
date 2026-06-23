@@ -33,7 +33,7 @@ SLIM(; λ₁=0.01, λ₂=0.1, max_iter=50, convergence_tol=1e-4, verbose=true)
 - `convergence_tol::T` — convergence threshold for coordinate descent
 - `nonneg::Bool` — enforce non-negative weights (default: true)
 """
-mutable struct SLIM{T<:AbstractFloat} <: AbstractSparseModel
+mutable struct SLIM{T<:AbstractFloat} <: AbstractItemSimilarity
     const λ₁::T
     const λ₂::T
     const max_iter::Int
@@ -171,11 +171,11 @@ end
 # ──────────────────────────────────────────────────────────────────────────────
 
 """
-    predict(model::SLIM, X; k=10) -> Matrix{Int}
+    recommend(model::SLIM, X; k=10) -> Matrix{Int}
 
 Return top-k item indices per user. Scores = X * W, excluding seen items.
 """
-function predict(model::SLIM{T}, X::SparseMatrixCSC; k::Int=10) where {T}
+function recommend(model::SLIM{T}, X::SparseMatrixCSC; k::Int=10) where {T}
     model.is_fitted || error("Model not fitted")
     n_users = size(X, 1)
     n_items = size(model.W, 1)
@@ -222,11 +222,11 @@ function predict(model::SLIM{T}, X::SparseMatrixCSC; k::Int=10) where {T}
 end
 
 """
-    predict_scores(model::SLIM, X) -> SparseMatrixCSC
+    score(model::SLIM, X) -> SparseMatrixCSC
 
 Return sparse score matrix S = X * W.
 """
-function predict_scores(model::SLIM{T}, X::SparseMatrixCSC) where {T}
+function score(model::SLIM{T}, X::SparseMatrixCSC) where {T}
     model.is_fitted || error("Model not fitted")
     X * model.W
 end

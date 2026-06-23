@@ -18,7 +18,7 @@ end
     X = sprand(rng, 80, 60, 0.05)
     model = LMF(rank=5, λ=0.01, learning_rate=0.01, max_iter=5, verbose=false)
     fit!(model, X; rng=rng)
-    preds = predict(model, X; k=5)
+    preds = recommend(model, X; k=5)
     @test size(preds) == (80, 5)
     @test all(preds .>= 1)
     @test all(preds .<= 60)

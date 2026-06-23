@@ -545,28 +545,4 @@ function _ials_loss(U::Matrix{T}, V::Matrix{T},
     loss + λ * (sum(abs2, U) + sum(abs2, V))
 end
 
-# ──────────────────────────────────────────────────────────────────────────────
-# predict
-# ──────────────────────────────────────────────────────────────────────────────
 
-"""
-    predict(model::IALS, X; k=10) -> Matrix{Int}
-
-Return top-k item indices per user. Excludes already-interacted items.
-Uses batched GEMM for efficient score computation.
-"""
-function predict(model::IALS{T}, X::SparseMatrixCSC; k::Int=10) where {T}
-    model.is_fitted || error("Model not fitted")
-    _predict_topk_batched(model.user_factors, model.item_factors, to_csr(X), k)
-end
-
-"""
-    predict_scores(model::IALS, user_indices, item_indices) -> Vector
-
-Return raw scores for specific (user, item) pairs.
-"""
-function predict_scores(model::IALS{T}, user_indices::AbstractVector{<:Integer},
-                        item_indices::AbstractVector{<:Integer}) where {T}
-    model.is_fitted || error("Model not fitted")
-    _predict_pairwise_scores(model.user_factors, model.item_factors, user_indices, item_indices)
-end

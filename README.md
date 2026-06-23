@@ -17,7 +17,7 @@ Gideon.jl is a pure-Julia port and enhancement of the R package [rsparse](https:
 
 ## Features
 
-- **Unified API** — `fit!` / `predict` / `predict_scores` / `transform` for every model; no framework lock-in.
+- **Unified API** — `fit!` / `recommend` / `score` / `transform` for recommenders; `fit!` / `predict` for regression models.
 - **Production-grade performance** — zero-allocation inner loops, `@inbounds @simd` vectorization, BLAS-2 gram updates, per-thread pre-allocated buffers.
 - **GPU acceleration** — optional CUDA.jl extension for EASE, iALS, WRMF (via package extensions).
 - **R-validated correctness** — the full test suite includes a Tier-2 fixture layer that compares numerically against pre-computed R / rsparse outputs.
@@ -26,6 +26,7 @@ Gideon.jl is a pure-Julia port and enhancement of the R package [rsparse](https:
 - **Tables.jl integration** — accept interaction data as `(user, item, value)` triplets from any Tables.jl-compatible source.
 - **Cross-validation & search** — built-in temporal split, k-fold CV, grid search, and random search with warm-starting.
 - **Callback system** — extensible training hooks for early stopping, checkpointing, learning rate scheduling, and custom logging.
+- **Similarity queries** — `similar_items` / `similar_users` for nearest-neighbor exploration via cosine similarity.
 
 ---
 
@@ -271,21 +272,28 @@ Gideon.jl
 
 ```julia
 AbstractSparseModel
-├── AbstractMatrixFactorization   →  WRMF, IALS, EALS, LMF, BPR, GloVe, SoftImputeResult
+├── AbstractRecommender
+│   ├── AbstractMatrixFactorization   →  WRMF, IALS, EALS, LMF, BPR, GloVe
+│   └── AbstractItemSimilarity        →  EASE, SLIM
 └── AbstractSparseRegression      →  FTRL, FactorizationMachine
-# Item-item models (no abstract parent):    EASE, SLIM
 ```
 
-Every model implements the same generic interface:
+Recommender models implement a shared interface via default methods on
+`AbstractMatrixFactorization` — no boilerplate per model:
 
 | Function | Description |
 |----------|-------------|
 | `fit!(model, X)` | Train in-place on sparse matrix `X` |
 | `partial_fit!(model, X, y)` | Online/incremental update (FTRL, FM, eALS) |
-| `predict(model, X; k)` | Return top-k item indices per user |
-| `predict_scores(model, X)` | Return full user×item score matrix |
+| `recommend(model, X; k)` | Return top-k item indices per user (seen items masked) |
+| `score(model, X)` | Return full user×item score matrix |
+| `score(model, users, items)` | Return scores for specific (user, item) pairs |
 | `transform(model, X)` | Return latent embeddings for new users |
+| `similar_items(model, id; k)` | Find k nearest items by cosine similarity |
+| `similar_users(model, id; k)` | Find k nearest users by cosine similarity |
 | `coef(model)` | Return learned weight vector (FTRL) |
+
+Regression models (FTRL, FM) use `predict(model, X)` instead of `recommend`/`score`.
 
 ---
 
@@ -387,7 +395,7 @@ best_params, best_score, _ = random_search(
 julia --project=. --threads=4 -e 'using Pkg; Pkg.test()'
 ```
 
-The suite runs **420+ tests** covering:
+The suite runs **796 tests** covering:
 
 - Unit correctness (dimensions, NaN / Inf guards, convergence monotonicity)
 - R / rsparse numerical fixture comparisons (weights, predictions, loss values)

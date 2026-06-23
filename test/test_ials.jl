@@ -21,23 +21,23 @@ end
     @test model.is_fitted
 end
 
-@testset "predict returns valid indices" begin
+@testset "recommend returns valid indices" begin
     rng = MersenneTwister(42)
     X = sprand(rng, 50, 40, 0.1)
     model = IALS(rank=5, λ=0.01, α=10.0, max_iter=5, verbose=false)
     fit!(model, X; rng=rng)
-    preds = predict(model, X; k=5)
+    preds = recommend(model, X; k=5)
     @test size(preds) == (50, 5)
     @test all(preds .>= 1)
     @test all(preds .<= 40)
 end
 
-@testset "predict_scores" begin
+@testset "score pairwise" begin
     rng = MersenneTwister(42)
     X = sprand(rng, 30, 20, 0.1)
     model = IALS(rank=4, λ=0.01, α=10.0, max_iter=3, verbose=false)
     fit!(model, X; rng=rng)
-    scores = predict_scores(model, [1, 2, 3], [1, 2, 3])
+    scores = score(model, [1, 2, 3], [1, 2, 3])
     @test length(scores) == 3
     @test all(isfinite, scores)
 end
@@ -69,7 +69,7 @@ end
     fit!(model, X; rng=rng)
     @test model.is_fitted
     @test all(isfinite, model.user_factors)
-    preds = predict(model, X; k=5)
+    preds = recommend(model, X; k=5)
     @test size(preds) == (50, 5)
     @test all(preds .>= 1)
     @test all(preds .<= 40)

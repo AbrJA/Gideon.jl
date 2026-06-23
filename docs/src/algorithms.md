@@ -13,8 +13,8 @@ using Gideon, SparseArrays, Random
 X = sprand(MersenneTwister(1), 500, 300, 0.03)
 model = WRMF(rank=10, λ=0.1, α=40.0, max_iter=20, solver=CHOLESKY)
 fit!(model, X; rng=MersenneTwister(42))
-preds = predict(model, X; k=5)
-scores = predict_scores(model, X)
+preds = recommend(model, X; k=5)
+scores = score(model, X)
 ```
 
 ## IALS — Implicit ALS with Gramian Caching
@@ -30,7 +30,7 @@ using Gideon, SparseArrays, Random
 X = sprand(MersenneTwister(1), 1000, 500, 0.02)
 model = IALS(rank=32, λ=0.01, α=1.0, max_iter=15)
 fit!(model, X; rng=MersenneTwister(42))
-preds = predict(model, X; k=10)
+preds = recommend(model, X; k=10)
 ```
 
 ## EALS — Element-wise ALS
@@ -46,7 +46,7 @@ using Gideon, SparseArrays, Random
 X = sprand(MersenneTwister(1), 1000, 500, 0.02)
 model = EALS(rank=64, λ=0.01, w0=10.0, max_iter=20)
 fit!(model, X; rng=MersenneTwister(42))
-preds = predict(model, X; k=10)
+preds = recommend(model, X; k=10)
 
 # Incremental update with new data
 X_new = sprand(MersenneTwister(2), 1000, 500, 0.01)
@@ -66,7 +66,7 @@ using Gideon, SparseArrays, Random
 X = sprand(MersenneTwister(1), 500, 300, 0.03)
 model = BPR(rank=32, λ=0.01, learning_rate=0.05, max_iter=50)
 fit!(model, X; rng=MersenneTwister(42))
-preds = predict(model, X; k=10)
+preds = recommend(model, X; k=10)
 ```
 
 ## LMF — Logistic Matrix Factorization
@@ -82,8 +82,8 @@ using Gideon, SparseArrays, Random
 X = sprand(MersenneTwister(1), 800, 300, 0.03)
 model = LMF(rank=15, α=1.0, λ=0.1, learning_rate=0.01, max_iter=20, n_negative=5)
 fit!(model, X; rng=MersenneTwister(42))
-preds = predict(model, X; k=10)
-scores = predict_scores(model, X)
+preds = recommend(model, X; k=10)
+scores = score(model, X)
 ```
 
 ## GloVe — Global Vectors
@@ -117,7 +117,7 @@ using Gideon, SparseArrays, Random
 X = sprand(MersenneTwister(1), 500, 200, 0.05)
 model = EASE(λ=500.0)
 fit!(model, X)
-preds = predict(model, X; k=10)
+preds = recommend(model, X; k=10)
 ```
 
 ## SLIM — Sparse Linear Methods
@@ -133,7 +133,7 @@ using Gideon, SparseArrays, Random
 X = sprand(MersenneTwister(1), 500, 100, 0.05)
 model = SLIM(λ=0.1, α=0.5, max_iter=100)
 fit!(model, X)
-preds = predict(model, X; k=10)
+preds = recommend(model, X; k=10)
 ```
 
 ## FTRL — Follow The Regularized Leader

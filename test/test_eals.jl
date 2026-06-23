@@ -21,12 +21,12 @@ end
     model = EALS(rank=8, λ=0.01, w0=1.0, max_iter=5, verbose=false)
     fit!(model, X; rng=MersenneTwister(1))
 
-    preds = predict(model, X; k=5)
+    preds = recommend(model, X; k=5)
     @test size(preds) == (50, 5)
     @test all(p -> 1 <= p <= 30, preds)
 
     # predict_scores
-    scores = predict_scores(model, X)
+    scores = score(model, X)
     @test size(scores) == (50, 30)
     @test !any(isnan, scores)
 end

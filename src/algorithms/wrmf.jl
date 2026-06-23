@@ -54,7 +54,7 @@ using SparseArrays, Gideon
 X = sprand(1000, 500, 0.01)
 model = WRMF(rank=64, λ=0.1, α=40.0, max_iter=15, solver=CONJUGATE_GRADIENT)
 fit!(model, X)
-scores = predict(model, X; k=10)
+recommendations = recommend(model, X; k=10)
 ```
 """
 mutable struct WRMF{T<:AbstractFloat} <: AbstractMatrixFactorization
@@ -495,12 +495,12 @@ function transform(model::WRMF{T}, X::SparseMatrixCSC) where {T}
 end
 
 """
-    predict(model::WRMF, X::SparseMatrixCSC; k=10) -> Matrix{Int}
+    recommend(model::WRMF, X::SparseMatrixCSC; k=10) -> Matrix{Int}
 
 Return top-k item indices for each user. Returns `n_users × k` matrix.
 Processes users in batches to avoid allocating the full score matrix.
 """
-function predict(model::WRMF{T}, X::SparseMatrixCSC; k::Int = 10) where {T}
+function recommend(model::WRMF{T}, X::SparseMatrixCSC; k::Int = 10) where {T}
     model.is_fitted || error("Model not fitted. Call fit! first.")
 
     # Use cached user factors if dimensions match (training data), else re-embed
@@ -514,24 +514,24 @@ function predict(model::WRMF{T}, X::SparseMatrixCSC; k::Int = 10) where {T}
 end
 
 """
-    predict_scores(model::WRMF, X) -> Matrix
+    score(model::WRMF, X) -> Matrix
 
 Return the full score matrix (n_users × n_items) without top-k filtering.
 Uses `transform` to embed users, then computes inner products with item factors.
 """
-function predict_scores(model::WRMF{T}, X::SparseMatrixCSC) where {T}
+function score(model::WRMF{T}, X::SparseMatrixCSC) where {T}
     model.is_fitted || error("Model not fitted. Call fit! first.")
     user_emb = transform(model, X)
     user_emb' * model.item_factors
 end
 
 """
-    predict_scores(model::WRMF, user_indices, item_indices) -> Vector
+    score(model::WRMF, user_indices, item_indices) -> Vector
 
 Return raw scores for specific (user, item) pairs using pre-fitted factors.
 """
-function predict_scores(model::WRMF{T}, user_indices::AbstractVector{<:Integer},
-                        item_indices::AbstractVector{<:Integer}) where {T}
+function score(model::WRMF{T}, user_indices::AbstractVector{<:Integer},
+              item_indices::AbstractVector{<:Integer}) where {T}
     model.is_fitted || error("Model not fitted. Call fit! first.")
     _predict_pairwise_scores(model.user_factors, model.item_factors, user_indices, item_indices)
 end

@@ -40,7 +40,7 @@ end
     X = sprand(rng, 40, 20, 0.15)
     model = SLIM(λ₁=0.01, λ₂=0.1, max_iter=20, verbose=false)
     fit!(model, X)
-    preds = predict(model, X; k=5)
+    preds = recommend(model, X; k=5)
     @test size(preds) == (40, 5)
     @test all(preds .>= 1)
     @test all(preds .<= 20)
@@ -51,6 +51,6 @@ end
     X = sprand(rng, 30, 15, 0.2)
     model = SLIM(λ₁=0.05, λ₂=0.1, max_iter=20, verbose=false)
     fit!(model, X)
-    S = predict_scores(model, X)
+    S = score(model, X)
     @test S isa SparseMatrixCSC
 end

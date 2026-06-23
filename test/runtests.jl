@@ -5,6 +5,7 @@ using LinearAlgebra
 using Random
 using Aqua
 using JET
+using Pkg
 
 @testset "Gideon.jl" begin
     @testset "Quality" begin

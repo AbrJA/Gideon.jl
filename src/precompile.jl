@@ -17,7 +17,7 @@ import PrecompileTools: @setup_workload, @compile_workload
         # WRMF with CG solver
         m_cg = WRMF(rank=4, λ=0.1, α=1.0, max_iter=2, solver=CONJUGATE_GRADIENT, verbose=false)
         fit!(m_cg, X_small; rng=MersenneTwister(2))
-        predict(m_cg, X_small; k=3)
+        recommend(m_cg, X_small; k=3)
         transform(m_cg, X_small)
 
         # WRMF with Cholesky solver
@@ -27,22 +27,22 @@ import PrecompileTools: @setup_workload, @compile_workload
         # iALS
         m_ials = IALS(rank=4, λ=0.01, α=10.0, max_iter=2, verbose=false)
         fit!(m_ials, X_small; rng=MersenneTwister(4))
-        predict(m_ials, X_small; k=3)
+        recommend(m_ials, X_small; k=3)
 
         # BPR
         m_bpr = BPR(rank=4, max_iter=2, n_samples=20, verbose=false)
         fit!(m_bpr, X_small; rng=MersenneTwister(5))
-        predict(m_bpr, X_small; k=3)
+        recommend(m_bpr, X_small; k=3)
 
         # EASE
         m_ease = EASE(λ=100.0, verbose=false)
         fit!(m_ease, X_small)
-        predict(m_ease, X_small; k=3)
+        recommend(m_ease, X_small; k=3)
 
         # SLIM
         m_slim = SLIM(λ₁=0.1, λ₂=0.5, max_iter=5, verbose=false)
         fit!(m_slim, X_small)
-        predict(m_slim, X_small; k=3)
+        recommend(m_slim, X_small; k=3)
 
         # GloVe (square matrix)
         C = sprand(rng, 10, 10, 0.5)

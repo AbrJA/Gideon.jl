@@ -43,7 +43,9 @@ include("precompile.jl")
 export
     # Types
     AbstractSparseModel,
+    AbstractRecommender,
     AbstractMatrixFactorization,
+    AbstractItemSimilarity,
     AbstractSparseRegression,
     ALSSolver, CHOLESKY, CONJUGATE_GRADIENT, NNLS,
     FeedbackType, IMPLICIT, EXPLICIT,
@@ -65,6 +67,8 @@ export
     # Generic API
     fit!,
     transform,
+    recommend,
+    score,
     predict,
     predict_scores,
     predict_scores_gpu,
@@ -72,6 +76,8 @@ export
     fit_gpu!,
     partial_fit!,
     coef,
+    similar_items,
+    similar_users,
 
     # Convenience functions
     soft_impute,
@@ -95,11 +101,15 @@ export
     AbstractCallback,
     CallbackInfo,
     on_epoch_end,
+    on_train_begin,
+    on_train_end,
     EarlyStoppingCallback,
     LossHistoryCallback,
     CheckpointCallback,
     LearningRateScheduler,
     run_callbacks,
+    run_callbacks_train_begin,
+    run_callbacks_train_end,
 
     # Serialization
     save_model,

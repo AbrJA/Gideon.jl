@@ -22,8 +22,8 @@ function ap_at_k(predictions::AbstractMatrix{<:Integer},
     n_users == size(actual, 1) || throw(DimensionMismatch("predictions has $n_users users but actual has $(size(actual, 1))"))
     actual_t = _transpose_for_row_access(actual)
     result = Vector{Float64}(undef, n_users)
-    @inbounds for u in 1:n_users
-        result[u] = _ap_single(predictions, actual_t, u, k)
+    Threads.@threads :static for u in 1:n_users
+        @inbounds result[u] = _ap_single(predictions, actual_t, u, k)
     end
     result
 end
@@ -73,8 +73,8 @@ function ndcg_at_k(predictions::AbstractMatrix{<:Integer},
     n_users == size(actual, 1) || throw(DimensionMismatch("predictions has $n_users users but actual has $(size(actual, 1))"))
     actual_t = _transpose_for_row_access(actual)
     result = Vector{Float64}(undef, n_users)
-    @inbounds for u in 1:n_users
-        result[u] = _ndcg_single(predictions, actual_t, u, k)
+    Threads.@threads :static for u in 1:n_users
+        @inbounds result[u] = _ndcg_single(predictions, actual_t, u, k)
     end
     result
 end
@@ -120,8 +120,8 @@ function precision_at_k(predictions::AbstractMatrix{<:Integer},
     n_users == size(actual, 1) || throw(DimensionMismatch("predictions has $n_users users but actual has $(size(actual, 1))"))
     actual_t = _transpose_for_row_access(actual)
     result = Vector{Float64}(undef, n_users)
-    @inbounds for u in 1:n_users
-        result[u] = _precision_single(predictions, actual_t, u, k)
+    Threads.@threads :static for u in 1:n_users
+        @inbounds result[u] = _precision_single(predictions, actual_t, u, k)
     end
     result
 end
@@ -155,20 +155,22 @@ function recall_at_k(predictions::AbstractMatrix{<:Integer},
     n_users == size(actual, 1) || throw(DimensionMismatch("predictions has $n_users users but actual has $(size(actual, 1))"))
     actual_t = _transpose_for_row_access(actual)
     result = Vector{Float64}(undef, n_users)
-    @inbounds for u in 1:n_users
-        relevant = Set(_relevant_items(actual_t, u))
-        if isempty(relevant)
-            result[u] = 0.0
-            continue
-        end
-        k_eff = min(k, size(predictions, 2))
-        hits = 0
-        @inbounds for pos in 1:k_eff
-            if predictions[u, pos] in relevant
-                hits += 1
+    Threads.@threads :static for u in 1:n_users
+        @inbounds begin
+            relevant = Set(_relevant_items(actual_t, u))
+            if isempty(relevant)
+                result[u] = 0.0
+                continue
             end
+            k_eff = min(k, size(predictions, 2))
+            hits = 0
+            for pos in 1:k_eff
+                if predictions[u, pos] in relevant
+                    hits += 1
+                end
+            end
+            result[u] = hits / length(relevant)
         end
-        result[u] = hits / length(relevant)
     end
     result
 end

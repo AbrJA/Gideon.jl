@@ -48,10 +48,10 @@ end
     @test all(model.item_factors .>= -1e-12)
 end
 
-@testset "predict top-k" begin
+@testset "recommend top-k" begin
     model = WRMF(rank=5, λ=λ, α=α, max_iter=3, verbose=false)
     fit!(model, X; rng=MersenneTwister(1))
-    preds = predict(model, X; k=5)
+    preds = recommend(model, X; k=5)
     @test size(preds) == (100, 5)
     @test all(preds .>= 1)
     @test all(preds .<= 80)
@@ -135,7 +135,7 @@ end
 
     m2 = WRMF(rank=5, λ=0.01, α=10.0, max_iter=50, solver=CHOLESKY, verbose=false)
     fit!(m2, X2; rng=MersenneTwister(42))
-    preds = predict(m2, X2; k=5)
+    preds = recommend(m2, X2; k=5)
     @test size(preds) == (30, 5)
     # Verify no seen items appear in predictions (masking works)
     for u in 1:5

@@ -59,7 +59,7 @@ using SparseArrays, Gideon
 X = sprand(1000, 500, 0.02)
 model = EALS(rank=64, λ=0.01, w0=10.0, max_iter=20)
 fit!(model, X)
-preds = predict(model, X; k=10)
+preds = recommend(model, X; k=10)
 ```
 """
 mutable struct EALS{T<:AbstractFloat} <: AbstractMatrixFactorization
@@ -496,26 +496,4 @@ function _eals_loss(U::Matrix{T}, V::Matrix{T}, X::SparseMatrixCSC,
     loss_obs + loss_miss + reg
 end
 
-# ──────────────────────────────────────────────────────────────────────────────
-# predict / predict_scores
-# ──────────────────────────────────────────────────────────────────────────────
 
-"""
-    predict(model::EALS, X; k=10) -> Matrix{Int}
-
-Return top-k item indices per user, excluding already-interacted items.
-"""
-function predict(model::EALS{T}, X::SparseMatrixCSC; k::Int=10) where {T}
-    model.is_fitted || error("Model not fitted")
-    _predict_topk_batched(model.user_factors, model.item_factors, to_csr(X), k)
-end
-
-"""
-    predict_scores(model::EALS, X) -> Matrix
-
-Return the full score matrix U' * V.
-"""
-function predict_scores(model::EALS{T}, X::SparseMatrixCSC) where {T}
-    model.is_fitted || error("Model not fitted")
-    model.user_factors' * model.item_factors
-end

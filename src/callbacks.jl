@@ -128,6 +128,24 @@ function on_epoch_end(cb::LearningRateScheduler, info::CallbackInfo)
 end
 
 """
+    on_train_begin(callback, model)
+
+Called once at the start of training. Override for setup logic.
+"""
+function on_train_begin(::AbstractCallback, model)
+    nothing
+end
+
+"""
+    on_train_end(callback, model)
+
+Called once at the end of training. Override for teardown/summary logic.
+"""
+function on_train_end(::AbstractCallback, model)
+    nothing
+end
+
+"""
     run_callbacks(callbacks, info) -> Bool
 
 Run all callbacks. Returns `true` if any callback signals `:stop`.
@@ -138,4 +156,26 @@ function run_callbacks(callbacks::Vector{<:AbstractCallback}, info::CallbackInfo
         result === :stop && return true
     end
     false
+end
+
+"""
+    run_callbacks_train_begin(callbacks, model)
+
+Run `on_train_begin` for all callbacks at the start of training.
+"""
+function run_callbacks_train_begin(callbacks::Vector{<:AbstractCallback}, model)
+    for cb in callbacks
+        on_train_begin(cb, model)
+    end
+end
+
+"""
+    run_callbacks_train_end(callbacks, model)
+
+Run `on_train_end` for all callbacks at the end of training.
+"""
+function run_callbacks_train_end(callbacks::Vector{<:AbstractCallback}, model)
+    for cb in callbacks
+        on_train_end(cb, model)
+    end
 end

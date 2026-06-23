@@ -1,6 +1,6 @@
 # test/test_coverage.jl — Additional tests to increase coverage
 # Covers: GPU (with CUDA), Tables.jl edge cases, serialization edge cases,
-# CheckpointCallback, predict_scores across models, transform, error paths
+# CheckpointCallback, score across models, transform, error paths
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Tables.jl edge cases
@@ -159,17 +159,17 @@ end
 end
 
 # ──────────────────────────────────────────────────────────────────────────────
-# predict_scores across all MF models
+# score across all MF models
 # ──────────────────────────────────────────────────────────────────────────────
 
-@testset "predict_scores universality" begin
+@testset "score universality" begin
     rng = MersenneTwister(42)
     X = sprand(rng, 40, 30, 0.1)
 
-    @testset "WRMF predict_scores" begin
+    @testset "WRMF score" begin
         model = WRMF(rank=4, max_iter=3, verbose=false)
         fit!(model, X; rng=MersenneTwister(1))
-        scores = predict_scores(model, [1, 2, 3], [1, 2, 3])
+        scores = score(model, [1, 2, 3], [1, 2, 3])
         @test length(scores) == 3
         @test all(isfinite, scores)
         # Verify against manual dot product
@@ -178,10 +178,10 @@ end
         @test scores ≈ expected
     end
 
-    @testset "LMF predict" begin
+    @testset "LMF recommend" begin
         model = LMF(rank=4, max_iter=3, learning_rate=0.01, verbose=false)
         fit!(model, X; rng=MersenneTwister(1))
-        preds = predict(model, X; k=5)
+        preds = recommend(model, X; k=5)
         @test size(preds) == (40, 5)
         @test all(preds .>= 1)
         @test all(preds .<= 30)
@@ -263,13 +263,13 @@ end
 # Predict masks seen items
 # ──────────────────────────────────────────────────────────────────────────────
 
-@testset "predict masks seen items" begin
+@testset "recommend masks seen items" begin
     rng = MersenneTwister(42)
     X = sprand(rng, 20, 15, 0.3)  # denser so we can check masking
 
     model = EASE(λ=50.0, verbose=false)
     fit!(model, X)
-    preds = predict(model, X; k=5)
+    preds = recommend(model, X; k=5)
 
     # For each user, predicted items should NOT be in their history
     rv = rowvals(X)
@@ -292,14 +292,14 @@ end
 # SLIM specific tests
 # ──────────────────────────────────────────────────────────────────────────────
 
-@testset "SLIM predict" begin
+@testset "SLIM recommend" begin
     rng = MersenneTwister(42)
     X = sprand(rng, 30, 20, 0.15)
     model = SLIM(λ₁=1.0, λ₂=0.5, max_iter=5, verbose=false)
     fit!(model, X)
     @test model.is_fitted
 
-    preds = predict(model, X; k=5)
+    preds = recommend(model, X; k=5)
     @test size(preds) == (30, 5)
     @test all(preds .>= 1)
     @test all(preds .<= 20)
@@ -402,7 +402,7 @@ if _HAS_CUDA
         fit!(model, X; rng=MersenneTwister(1))
 
         preds_gpu = predict_gpu(model, X; k=10)
-        preds_cpu = predict(model, X; k=10)
+        preds_cpu = recommend(model, X; k=10)
 
         @test size(preds_gpu) == (50, 10)
         @test all(preds_gpu .>= 1)
@@ -471,7 +471,7 @@ end
         model = EASE(λ=10.0, verbose=false)
         fit!(model, X)
         @test model.is_fitted
-        preds = predict(model, X; k=5)
+        preds = recommend(model, X; k=5)
         @test size(preds) == (1, 5)
     end
 
@@ -487,7 +487,7 @@ end
         model = EASE(λ=10.0, verbose=false)
         fit!(model, X)
         # k=10 > n_items=5, should still work
-        preds = predict(model, X; k=10)
+        preds = recommend(model, X; k=10)
         @test size(preds, 2) <= 5
     end
 

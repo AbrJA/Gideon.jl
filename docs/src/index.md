@@ -33,15 +33,21 @@ X = sprand(MersenneTwister(42), 1000, 500, 0.02)
 model = WRMF(rank=10, λ=0.1, α=40.0, max_iter=15)
 fit!(model, X)
 
-# Get top-10 recommendations
-predictions = predict(model, X; k=10)
+# Get top-10 recommendations (seen items automatically masked)
+recommendations = recommend(model, X; k=10)
 
 # Full score matrix
-scores = predict_scores(model, X)
+scores = score(model, X)
+
+# Scores for specific (user, item) pairs
+pair_scores = score(model, [1, 2, 3], [10, 20, 30])
+
+# Find similar items/users by cosine similarity
+ids, sims = similar_items(model, 42; k=5)
 
 # Evaluate
 hold_out = sprand(MersenneTwister(99), 1000, 500, 0.01)
-map_score = map_at_k(predictions, hold_out; k=10)
+map_score = map_at_k(recommendations, hold_out; k=10)
 println("MAP@10: $map_score")
 ```
 
@@ -51,3 +57,30 @@ println("MAP@10: $map_score")
 using Pkg
 Pkg.add(url="https://github.com/AbrJA/Gideon.jl")
 ```
+
+## API Design
+
+Gideon separates **recommender models** from **regression models** with domain-appropriate verbs:
+
+| Model type | Top-k predictions | Raw scores | Regression |
+|---|---|---|---|
+| Recommenders (WRMF, IALS, EASE, ...) | `recommend(model, X; k)` | `score(model, X)` | — |
+| Regression (FTRL, FM) | — | — | `predict(model, X)` |
+
+All models share `fit!(model, X)` for training. Matrix factorization models additionally support:
+
+- `transform(model, X)` — embed new users into the latent space
+- `similar_items(model, id; k)` / `similar_users(model, id; k)` — cosine-based neighbors
+
+The type hierarchy uses Julia's dispatch to provide default implementations:
+
+```julia
+AbstractSparseModel
+├── AbstractRecommender
+│   ├── AbstractMatrixFactorization  # WRMF, IALS, EALS, LMF, BPR, GloVe
+│   └── AbstractItemSimilarity       # EASE, SLIM
+└── AbstractSparseRegression         # FTRL, FactorizationMachine
+```
+
+New models inheriting from `AbstractMatrixFactorization` automatically get `recommend`,
+`score`, `similar_items`, and `similar_users` with no boilerplate required.

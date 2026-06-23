@@ -2,12 +2,24 @@
 
 @testset "Type Hierarchy" begin
     @test WRMF <: AbstractMatrixFactorization
+    @test WRMF <: AbstractRecommender
     @test WRMF <: AbstractSparseModel
     @test GloVe <: AbstractMatrixFactorization
+    @test GloVe <: AbstractRecommender
     @test LMF <: AbstractMatrixFactorization
+    @test BPR <: AbstractMatrixFactorization
+    @test IALS <: AbstractMatrixFactorization
+    @test EALS <: AbstractMatrixFactorization
+    @test EASE <: AbstractItemSimilarity
+    @test EASE <: AbstractRecommender
+    @test SLIM <: AbstractItemSimilarity
+    @test SLIM <: AbstractRecommender
     @test FTRL <: AbstractSparseRegression
     @test FTRL <: AbstractSparseModel
     @test FactorizationMachine <: AbstractSparseRegression
+    # Verify AbstractRecommender is NOT a parent of regression models
+    @test !(FTRL <: AbstractRecommender)
+    @test !(FactorizationMachine <: AbstractRecommender)
 end
 
 @testset "Sigmoid" begin

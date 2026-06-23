@@ -399,28 +399,4 @@ function _sample_from_cumsum(rng::AbstractRNG, cumsum::Vector{T},
     lo
 end
 
-# ──────────────────────────────────────────────────────────────────────────────
-# predict
-# ──────────────────────────────────────────────────────────────────────────────
 
-"""
-    predict(model::BPR, X; k=10) -> Matrix{Int}
-
-Return top-k item indices per user, excluding already-interacted items.
-Uses batched GEMM for efficient score computation.
-"""
-function predict(model::BPR{T}, X::SparseMatrixCSC; k::Int=10) where {T}
-    model.is_fitted || error("Model not fitted")
-    _predict_topk_batched(model.user_factors, model.item_factors, to_csr(X), k)
-end
-
-"""
-    predict_scores(model::BPR, user_indices, item_indices) -> Vector
-
-Return raw scores for specific (user, item) pairs.
-"""
-function predict_scores(model::BPR{T}, user_indices::AbstractVector{<:Integer},
-                        item_indices::AbstractVector{<:Integer}) where {T}
-    model.is_fitted || error("Model not fitted")
-    _predict_pairwise_scores(model.user_factors, model.item_factors, user_indices, item_indices)
-end

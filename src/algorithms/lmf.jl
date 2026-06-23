@@ -28,7 +28,7 @@ using SparseArrays, Gideon
 X = sprand(1000, 500, 0.01)
 model = LMF(rank=32, max_iter=20, learning_rate=0.01)
 fit!(model, X)
-top_items = predict(model, X; k=10)
+top_items = recommend(model, X; k=10)
 ```
 """
 mutable struct LMF{T<:AbstractFloat} <: AbstractMatrixFactorization
@@ -218,22 +218,4 @@ function fit!(model::LMF{T}, X::SparseMatrixCSC{Tv,Ti};
     model
 end
 
-"""
-    predict(model::LMF, X; k=10) -> Matrix{Int}
 
-Return top-k item indices for each user. Returns `n_users × k` matrix.
-"""
-function predict(model::LMF{T}, X::SparseMatrixCSC; k::Int = 10) where {T}
-    model.is_fitted || error("Model not fitted")
-    _predict_topk_batched(model.user_factors, model.item_factors, to_csr(X), k)
-end
-
-"""
-    predict_scores(model::LMF, X) -> Matrix
-
-Return the full score matrix (n_users × n_items) = U' * V.
-"""
-function predict_scores(model::LMF{T}, X::SparseMatrixCSC) where {T}
-    model.is_fitted || error("Model not fitted")
-    model.user_factors' * model.item_factors
-end
