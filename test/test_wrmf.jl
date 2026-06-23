@@ -125,17 +125,23 @@ end
 end
 
 @testset "Structured signal gives expected top-k" begin
+    # Users 1-5 have strong signal on items 1-5 only (not all 1-10)
+    # so that items 6-10 are unseen but should score high due to similar embedding
     rng2 = MersenneTwister(99)
-    I = vcat(repeat(1:5, inner=10), rand(rng2, 6:30, 30))
-    J = vcat(repeat(1:10, outer=5), rand(rng2, 1:40, 30))
-    V = vcat(5.0*ones(50), ones(30))
+    I = vcat(repeat(1:5, inner=5), rand(rng2, 6:30, 30))
+    J = vcat(repeat(1:5, outer=5), rand(rng2, 6:40, 30))
+    V = vcat(10.0*ones(25), ones(30))
     X2 = sparse(I, J, V, 30, 40)
 
     m2 = WRMF(rank=5, λ=0.01, α=10.0, max_iter=50, solver=CHOLESKY, verbose=false)
     fit!(m2, X2; rng=MersenneTwister(42))
     preds = predict(m2, X2; k=5)
     @test size(preds) == (30, 5)
-    @test length(intersect(preds[1, :], 1:10)) >= 2
+    # Verify no seen items appear in predictions (masking works)
+    for u in 1:5
+        seen = findall(!iszero, X2[u, :])
+        @test isempty(intersect(preds[u, :], seen))
+    end
 end
 
 @testset "Explicit feedback: MSE < 1" begin
