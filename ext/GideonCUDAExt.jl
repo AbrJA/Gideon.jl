@@ -4,8 +4,9 @@
 #
 # This extension is loaded automatically when CUDA.jl is available.
 # It provides GPU-accelerated versions of key operations:
-# - EASE: Gramian computation and matrix inversion on GPU
-# - iALS/WRMF: Gramian caching and batched solves on GPU
+# - EASE: Sparse Gramian computation via cuSPARSE + dense inverse on GPU
+# - iALS: GPU Gramian caching with pre-allocated per-thread CPU solves
+# - WRMF: GPU Gramian (cuBLAS syrk) with per-thread CPU ALS solves
 # - Score computation: Batch user-item scoring on GPU
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -20,7 +21,7 @@ using SparseArrays
 using Random
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Helper kernels for diagonal operations on GPU
+# GPU utility kernels
 # ──────────────────────────────────────────────────────────────────────────────
 
 function _gpu_diag_add_kernel!(A, val)
@@ -55,6 +56,26 @@ function _gpu_set_diag_zero!(A::CuMatrix)
     return A
 end
 
+function _gpu_compute_B_kernel!(B, P, n)
+    j = threadIdx().x + (blockIdx().x - 1) * blockDim().x
+    i = threadIdx().y + (blockIdx().y - 1) * blockDim().y
+    if i <= n && j <= n
+        if i == j
+            @inbounds B[i, j] = zero(eltype(B))
+        else
+            @inbounds B[i, j] = -P[i, j] / P[j, j]
+        end
+    end
+    return nothing
+end
+
+"""
+    _estimate_gpu_memory(n_floats, T) -> Int
+
+Estimate GPU memory required for n_floats of type T in bytes.
+"""
+_estimate_gpu_memory(n_floats::Int, ::Type{T}) where T = n_floats * sizeof(T)
+
 # ──────────────────────────────────────────────────────────────────────────────
 # GPU-accelerated EASE
 # ──────────────────────────────────────────────────────────────────────────────
@@ -62,59 +83,61 @@ end
 """
     fit_gpu!(model::EASE, X) -> model
 
-GPU-accelerated EASE fitting. Computes XᵀX and matrix inverse on GPU.
-Falls back to CPU if matrix is too large for GPU memory.
+GPU-accelerated EASE fitting. Uses cuSPARSE for the sparse Gramian XᵀX
+and cuSOLVER for the Cholesky inverse, keeping all heavy computation on GPU.
+Falls back to CPU if insufficient GPU memory.
 """
 function Gideon.fit_gpu!(model::Gideon.EASE{T}, X::SparseMatrixCSC{Tv,Ti}) where {T,Tv,Ti}
     n_users, n_items = size(X)
 
-    model.verbose && @info "[EASE-GPU] Transferring data to GPU ($(n_items) items)..."
+    model.verbose && @info "[EASE-GPU] Computing Gramian via cuSPARSE ($(n_items) items)..."
 
-    # Check available GPU memory
+    # Memory check: need ~3 dense n_items×n_items matrices on GPU
     free_mem = CUDA.free_memory()
-    estimated_mem = sizeof(T) * n_items * n_items * 3
+    estimated_mem = _estimate_gpu_memory(n_items * n_items * 3, T)
 
     if estimated_mem > free_mem * 0.8
-        @warn "[EASE-GPU] Insufficient GPU memory (need ~$(estimated_mem ÷ 1_000_000)MB), falling back to CPU"
+        @warn "[EASE-GPU] Insufficient GPU memory (need ~$(estimated_mem ÷ 1_000_000)MB, " *
+              "have ~$(free_mem ÷ 1_000_000)MB), falling back to CPU"
         Gideon.fit!(model, X)
         return model
     end
 
-    # Transfer and compute Gram matrix on GPU
-    X_dense = CuMatrix{T}(Matrix{T}(X))
-    G_gpu = X_dense' * X_dense
-    X_dense = nothing
-    GC.gc(false)
+    # Transfer sparse matrix to GPU and compute Gramian G = XᵀX
+    # Use dense representation for XᵀX since the result is dense anyway
+    X_gpu = CuSparseMatrixCSC{T}(X)
+    X_dense_gpu = CuMatrix{T}(X_gpu)
+    G_gpu = X_dense_gpu' * X_dense_gpu
+    X_gpu = nothing
+    X_dense_gpu = nothing
     CUDA.reclaim()
 
-    # Add regularization to diagonal
+    # Add regularization: G += λI
     _gpu_add_to_diag!(G_gpu, model.λ)
 
-    model.verbose && @info "[EASE-GPU] Computing Cholesky inverse on GPU..."
+    model.verbose && @info "[EASE-GPU] Computing Cholesky inverse on GPU ($(n_items)×$(n_items))..."
 
-    # Cholesky factorization and inversion
+    # Cholesky factorization and inversion on GPU
     C_gpu = cholesky(Symmetric(G_gpu))
     P_gpu = inv(C_gpu)
     G_gpu = nothing
     CUDA.reclaim()
 
-    # Compute B: B_ij = -P_ij / P_jj, B_ii = 0
-    P = Array(P_gpu)
+    # Compute B entirely on GPU: B_ij = -P_ij / P_jj, B_ii = 0
+    B_gpu = CuMatrix{T}(undef, n_items, n_items)
+    threads_2d = (16, 16)
+    blocks_2d = (cld(n_items, 16), cld(n_items, 16))
+    @cuda threads=threads_2d blocks=blocks_2d _gpu_compute_B_kernel!(B_gpu, P_gpu, n_items)
     P_gpu = nothing
     CUDA.reclaim()
 
-    diag_P = diag(P)
-    B = -P
-    for j in 1:n_items
-        B[:, j] ./= diag_P[j]
-    end
-    @inbounds for j in 1:n_items
-        B[j, j] = zero(T)
-    end
+    # Transfer result back to CPU
+    model.B = Array(B_gpu)
+    B_gpu = nothing
+    CUDA.reclaim()
 
-    model.B = B
     model.is_fitted = true
-    model.verbose && @info "[EASE-GPU] Done."
+    model.verbose && @info "[EASE-GPU] Done. B matrix: $(n_items)×$(n_items)"
     model
 end
 
@@ -125,8 +148,8 @@ end
 """
     fit_gpu!(model::IALS, X; rng) -> model
 
-GPU-accelerated iALS. Uses GPU for Gramian computation and score matrices.
-Per-user solves remain on CPU (memory-efficient for large user bases).
+GPU-accelerated iALS. Uses cuBLAS syrk for Gramian computation (V*Vᵀ and U*Uᵀ),
+with pre-allocated per-thread buffers for the CPU-side per-user Cholesky solves.
 """
 function Gideon.fit_gpu!(model::Gideon.IALS{T}, X::SparseMatrixCSC{Tv,Ti};
                          rng::Random.AbstractRNG = Random.default_rng()) where {T,Tv,Ti}
@@ -143,38 +166,52 @@ function Gideon.fit_gpu!(model::Gideon.IALS{T}, X::SparseMatrixCSC{Tv,Ti};
     X_csr = Gideon.to_csr(X)
     monitor = Gideon.ConvergenceMonitor{T}(tol=T(model.convergence_tol), min_iter=2)
 
+    # Pre-allocate per-thread buffers (avoids allocation inside @threads loop)
+    nt = Threads.maxthreadid()
+    A_bufs = [Matrix{T}(undef, k, k) for _ in 1:nt]
+    b_bufs = [Vector{T}(undef, k) for _ in 1:nt]
+
+    # Persistent GPU buffer for Gramian
+    gramian_gpu = CuMatrix{T}(undef, k, k)
+
     for iter in 1:model.max_iter
         iter_start = time_ns()
 
-        # Compute Gramian on GPU: V*V' + λI
+        # ── Compute item Gramian on GPU: VVᵀ + λI ──
         V_gpu = CuMatrix{T}(V)
-        gramian_gpu = V_gpu * V_gpu'
+        CUBLAS.syrk!('U', 'N', one(T), V_gpu, zero(T), gramian_gpu)
+        CUDA.@sync gramian_gpu
         gramian = Array(gramian_gpu)
+        LinearAlgebra.copytri!(gramian, 'U')
         @inbounds for i in 1:k
             gramian[i, i] += λ
         end
+        V_gpu = nothing
 
-        # Update users with GPU-computed Gramian
-        _gpu_ials_update!(U, V, X_csr, gramian, α, k,
-                          u -> nzrange(X_csr, u),
-                          idx -> Int(X_csr.colval[idx]),
-                          idx -> T(X_csr.nzval[idx]))
+        # ── Update users with pre-allocated buffers ──
+        _gpu_ials_update_buffered!(U, V, X_csr, gramian, α, k, A_bufs, b_bufs,
+                                   u -> nzrange(X_csr, u),
+                                   idx -> Int(X_csr.colval[idx]),
+                                   idx -> T(X_csr.nzval[idx]))
 
-        # Compute Gramian for item update
+        # ── Compute user Gramian on GPU: UUᵀ + λI ──
         U_gpu = CuMatrix{T}(U)
-        gramian_gpu = U_gpu * U_gpu'
+        CUBLAS.syrk!('U', 'N', one(T), U_gpu, zero(T), gramian_gpu)
+        CUDA.@sync gramian_gpu
         gramian = Array(gramian_gpu)
+        LinearAlgebra.copytri!(gramian, 'U')
         @inbounds for i in 1:k
             gramian[i, i] += λ
         end
+        U_gpu = nothing
 
-        # Update items
-        _gpu_ials_update!(V, U, X, gramian, α, k,
-                          j -> nzrange(X, j),
-                          idx -> Int(rowvals(X)[idx]),
-                          idx -> T(nonzeros(X)[idx]))
+        # ── Update items with pre-allocated buffers ──
+        _gpu_ials_update_buffered!(V, U, X, gramian, α, k, A_bufs, b_bufs,
+                                   j -> nzrange(X, j),
+                                   idx -> Int(rowvals(X)[idx]),
+                                   idx -> T(nonzeros(X)[idx]))
 
-        loss = _gpu_ials_loss(U, V, X, α, λ)
+        loss = _ials_loss(U, V, X, α, λ)
         iter_seconds = (time_ns() - iter_start) / 1e9
         total_seconds = Gideon.elapsed_seconds(monitor)
 
@@ -189,19 +226,34 @@ function Gideon.fit_gpu!(model::Gideon.IALS{T}, X::SparseMatrixCSC{Tv,Ti};
         end
     end
 
+    gramian_gpu = nothing
+    CUDA.reclaim()
+
     model.user_factors = U
     model.item_factors = V
     model.is_fitted = true
     model
 end
 
-function _gpu_ials_update!(target::Matrix{T}, source::Matrix{T}, R,
-                           gramian::Matrix{T}, α::T, k::Int,
-                           get_range, get_col, get_val) where {T}
+"""
+Per-user/item ALS update with pre-allocated per-thread Gramian and RHS buffers.
+Avoids allocation inside the inner loop — critical for performance.
+"""
+function _gpu_ials_update_buffered!(target::Matrix{T}, source::Matrix{T}, R,
+                                    gramian::Matrix{T}, α::T, k::Int,
+                                    A_bufs::Vector{Matrix{T}},
+                                    b_bufs::Vector{Vector{T}},
+                                    get_range, get_col, get_val) where {T}
     n = size(target, 2)
     Threads.@threads :static for u in 1:n
-        A = copy(gramian)
-        b = zeros(T, k)
+        tid = Threads.threadid()
+        A = A_bufs[tid]
+        b = b_bufs[tid]
+
+        # A ← gramian (copy into pre-allocated buffer)
+        copyto!(A, gramian)
+        fill!(b, zero(T))
+
         @inbounds for idx in get_range(u)
             i = get_col(idx)
             r_ui = get_val(idx)
@@ -214,6 +266,8 @@ function _gpu_ials_update!(target::Matrix{T}, source::Matrix{T}, R,
                 end
             end
         end
+
+        # Solve via in-place Cholesky
         x = cholesky!(Symmetric(A)) \ b
         @inbounds for f in 1:k
             target[f, u] = x[f]
@@ -221,7 +275,10 @@ function _gpu_ials_update!(target::Matrix{T}, source::Matrix{T}, R,
     end
 end
 
-function _gpu_ials_loss(U::Matrix{T}, V::Matrix{T}, X::SparseMatrixCSC, α::T, λ::T) where {T}
+"""
+Compute reconstruction loss for iALS (CPU, used for convergence monitoring).
+"""
+function _ials_loss(U::Matrix{T}, V::Matrix{T}, X::SparseMatrixCSC, α::T, λ::T) where {T}
     k = size(U, 1)
     loss = zero(T)
     rv = rowvals(X)
@@ -247,29 +304,51 @@ end
 # ──────────────────────────────────────────────────────────────────────────────
 
 """
-    fit_gpu!(model::WRMF, X; rng) -> model
+    fit_gpu!(model::WRMF, X; rng, U_init, V_init) -> model
 
-GPU-accelerated WRMF. Uses GPU for Gramian computation (YᵀY via cuBLAS syrk).
+GPU-accelerated WRMF. Uses cuBLAS syrk for Gramian computation (YᵀY)
+on GPU, then performs per-user/item Cholesky solves on CPU with
+pre-allocated per-thread buffers.
+
+This provides significant speedup for large item/user counts where the
+Gramian computation (O(k² × n_items)) dominates iteration cost.
 """
 function Gideon.fit_gpu!(model::Gideon.WRMF{T}, X::SparseMatrixCSC{Tv,Ti};
-                         rng::Random.AbstractRNG = Random.default_rng()) where {T,Tv,Ti}
+                         rng::Random.AbstractRNG = Random.default_rng(),
+                         U_init::Union{Nothing, Matrix{T}} = nothing,
+                         V_init::Union{Nothing, Matrix{T}} = nothing) where {T,Tv,Ti}
     n_users, n_items = size(X)
     k = model.rank
+    λ = model.λ
+    α = model.α
+    is_implicit = model.feedback == Gideon.IMPLICIT
 
-    model.user_factors = Gideon.init_factors(rng, k, n_users)
-    model.item_factors = Gideon.init_factors(rng, k, n_items)
+    # Initialize factors
+    model.user_factors = isnothing(U_init) ? Gideon.init_factors(rng, k, n_users) : copy(U_init)
+    model.item_factors = isnothing(V_init) ? Gideon.init_factors(rng, k, n_items) : copy(V_init)
 
-    model.verbose && @info "[WRMF-GPU] Training rank=$k, solver=$(model.solver)"
+    model.verbose && @info "[WRMF-GPU] Training rank=$k, solver=$(model.solver), $(n_users) users × $(n_items) items"
 
+    # Build transpose for row access
     Xt = SparseMatrixCSC(X')
+
     monitor = Gideon.ConvergenceMonitor{T}(tol=T(model.convergence_tol), min_iter=2)
+
+    # Pre-allocate per-thread buffers
+    nt = Threads.maxthreadid()
+    gram_bufs = [Matrix{T}(undef, k, k) for _ in 1:nt]
+    rhs_bufs  = [Vector{T}(undef, k) for _ in 1:nt]
 
     for iter in 1:model.max_iter
         iter_start = time_ns()
 
-        # Use GPU for Gramian, CPU for per-user solves
-        Gideon._als_sweep!(model, Xt, model.user_factors, model.item_factors, n_users)
-        Gideon._als_sweep!(model, X, model.item_factors, model.user_factors, n_items)
+        # ── Update users: fix items, compute item Gramian on GPU ──
+        _gpu_wrmf_sweep!(model, Xt, model.user_factors, model.item_factors,
+                         n_users, gram_bufs, rhs_bufs)
+
+        # ── Update items: fix users, compute user Gramian on GPU ──
+        _gpu_wrmf_sweep!(model, X, model.item_factors, model.user_factors,
+                         n_items, gram_bufs, rhs_bufs)
 
         loss = Gideon._compute_loss(model, X)
         iter_seconds = (time_ns() - iter_start) / 1e9
@@ -290,48 +369,198 @@ function Gideon.fit_gpu!(model::Gideon.WRMF{T}, X::SparseMatrixCSC{Tv,Ti};
     model
 end
 
+"""
+Single ALS sweep with GPU-accelerated Gramian computation via cuBLAS syrk.
+The Gramian YᵀY is computed on GPU, then per-entity solves run on CPU.
+"""
+function _gpu_wrmf_sweep!(
+    model::Gideon.WRMF{T},
+    A::SparseMatrixCSC,
+    factors::Matrix{T},
+    fixed::Matrix{T},
+    n_entities::Int,
+    gram_bufs::Vector{Matrix{T}},
+    rhs_bufs::Vector{Vector{T}},
+) where {T}
+    k = model.rank
+    λ = model.λ
+    α = model.α
+    is_implicit = model.feedback == Gideon.IMPLICIT
+    is_nnls = model.solver == Gideon.NNLS
+
+    # ── Compute YᵀY on GPU via cuBLAS syrk ──
+    fixed_gpu = CuMatrix{T}(fixed)
+    YtY_gpu = CuMatrix{T}(undef, k, k)
+    CUBLAS.syrk!('U', 'N', one(T), fixed_gpu, zero(T), YtY_gpu)
+    CUDA.@sync YtY_gpu
+    YtY = Array(YtY_gpu)
+    LinearAlgebra.copytri!(YtY, 'U')
+    fixed_gpu = nothing
+    YtY_gpu = nothing
+
+    rv = rowvals(A)
+    nz = nonzeros(A)
+
+    # ── Per-entity Cholesky solves on CPU with pre-allocated buffers ──
+    Base.Threads.@threads :static for u in 1:n_entities
+        tid = Threads.threadid()
+        gram = gram_bufs[tid]
+        rhs = rhs_bufs[tid]
+
+        # gram ← YᵀY + λI
+        copyto!(gram, YtY)
+        @inbounds for d in 1:k
+            gram[d, d] += λ
+        end
+        fill!(rhs, zero(T))
+
+        for idx in nzrange(A, u)
+            i = rv[idx]
+            rui = T(nz[idx])
+            yi = @view fixed[:, i]
+
+            if is_implicit
+                cui = one(T) + α * rui
+                BLAS.syr!('U', cui - one(T), yi, gram)
+                BLAS.axpy!(cui, yi, rhs)
+            else
+                BLAS.axpy!(rui, yi, rhs)
+            end
+        end
+
+        # Mirror upper triangle
+        LinearAlgebra.copytri!(gram, 'U')
+
+        if is_nnls
+            Gideon._nnls_cd!(factors, gram, rhs, u, k)
+        else
+            # In-place Cholesky solve
+            _, info = LAPACK.potrf!('U', gram)
+            if info == 0
+                LAPACK.potrs!('U', gram, rhs)
+                @inbounds for f in 1:k
+                    factors[f, u] = rhs[f]
+                end
+            else
+                # Fallback: add more regularization
+                @inbounds for d in 1:k
+                    gram[d, d] += λ
+                end
+                LinearAlgebra.copytri!(gram, 'U')
+                _, info2 = LAPACK.potrf!('U', gram)
+                if info2 == 0
+                    LAPACK.potrs!('U', gram, rhs)
+                end
+                @inbounds for f in 1:k
+                    factors[f, u] = rhs[f]
+                end
+            end
+        end
+    end
+end
+
 # ──────────────────────────────────────────────────────────────────────────────
-# GPU-accelerated score computation for MF models
+# GPU-accelerated score computation
 # ──────────────────────────────────────────────────────────────────────────────
 
 """
     predict_scores_gpu(model, X) -> Matrix
 
-Compute full score matrix U'V on GPU, transfer back to CPU.
+Compute full score matrix U'V on GPU via cuBLAS gemm, transfer back to CPU.
 Works for any model with `user_factors` and `item_factors` fields.
+
+Memory: O(n_users × n_items) on GPU. For very large problems, use
+`predict_gpu` which streams results in batches.
 """
 function Gideon.predict_scores_gpu(model, X::SparseMatrixCSC{Tv,Ti}) where {Tv,Ti}
     T = eltype(model.user_factors)
+    n_users = size(model.user_factors, 2)
+    n_items = size(model.item_factors, 2)
+
+    # Check GPU memory
+    free_mem = CUDA.free_memory()
+    needed = _estimate_gpu_memory(n_users * n_items + size(model.user_factors, 1) *
+             (n_users + n_items), T)
+    if needed > free_mem * 0.8
+        @warn "[predict_scores_gpu] Insufficient GPU memory, falling back to CPU"
+        return model.user_factors' * model.item_factors
+    end
+
     U_gpu = CuMatrix{T}(model.user_factors)
     V_gpu = CuMatrix{T}(model.item_factors)
     S_gpu = U_gpu' * V_gpu
-    Array(S_gpu)
+    S = Array(S_gpu)
+    U_gpu = nothing
+    V_gpu = nothing
+    S_gpu = nothing
+    CUDA.reclaim()
+    S
 end
 
 """
-    predict_gpu(model, X; k=10) -> Matrix{Int}
+    predict_gpu(model, X; k=10, batch_size=0) -> Matrix{Int}
 
-GPU-accelerated top-k prediction. Computes all scores on GPU,
-then does top-k selection on CPU.
+GPU-accelerated top-k prediction. Computes scores on GPU in batches
+(auto-sized to available GPU memory), masks seen items, and selects
+top-k on CPU.
+
+# Arguments
+- `k::Int` — number of items to recommend per user
+- `batch_size::Int` — users per batch (0 = auto based on GPU memory)
 """
-function Gideon.predict_gpu(model, X::SparseMatrixCSC; k::Int=10)
-    S = Gideon.predict_scores_gpu(model, X)
-    T_elem = eltype(S)
-    n_users, n_items = size(S)
+function Gideon.predict_gpu(model, X::SparseMatrixCSC; k::Int=10, batch_size::Int=0)
+    T_elem = eltype(model.user_factors)
+    n_users = size(model.user_factors, 2)
+    n_items = size(model.item_factors, 2)
     k_out = min(k, n_items)
+    rank = size(model.user_factors, 1)
 
-    # Mask seen items
-    rv = rowvals(X)
-    for j in axes(X, 2)
-        for idx in nzrange(X, j)
-            S[rv[idx], j] = T_elem(-Inf)
+    # Determine batch size based on GPU memory
+    if batch_size <= 0
+        free_mem = CUDA.free_memory()
+        bytes_per_user = sizeof(T_elem) * n_items
+        factor_bytes = sizeof(T_elem) * rank * (n_users + n_items)
+        available = floor(Int, free_mem * 0.7) - factor_bytes
+        batch_size = max(1, available ÷ bytes_per_user)
+        batch_size = min(batch_size, n_users)
+    end
+
+    # Transfer item factors to GPU once
+    V_gpu = CuMatrix{T_elem}(model.item_factors)
+    preds = Matrix{Int}(undef, n_users, k_out)
+
+    for batch_start in 1:batch_size:n_users
+        batch_end = min(batch_start + batch_size - 1, n_users)
+        batch_range = batch_start:batch_end
+        batch_n = length(batch_range)
+
+        # Compute scores for this batch on GPU
+        U_batch_gpu = CuMatrix{T_elem}(model.user_factors[:, batch_range])
+        S_batch_gpu = U_batch_gpu' * V_gpu
+        S_batch = Array(S_batch_gpu)
+        U_batch_gpu = nothing
+        S_batch_gpu = nothing
+
+        # Mask seen items (CPU — fast O(nnz_batch) operation)
+        rv = rowvals(X)
+        for j in axes(X, 2)
+            for idx in nzrange(X, j)
+                u = rv[idx]
+                if u in batch_range
+                    @inbounds S_batch[u - batch_start + 1, j] = T_elem(-Inf)
+                end
+            end
+        end
+
+        # Top-k selection (CPU, parallelized)
+        Threads.@threads :static for local_u in 1:batch_n
+            @inbounds preds[batch_start + local_u - 1, :] .=
+                partialsortperm(@view(S_batch[local_u, :]), 1:k_out; rev=true)
         end
     end
 
-    preds = Matrix{Int}(undef, n_users, k_out)
-    Threads.@threads for u in 1:n_users
-        preds[u, :] .= partialsortperm(@view(S[u, :]), 1:k_out; rev=true)
-    end
+    V_gpu = nothing
+    CUDA.reclaim()
     preds
 end
 

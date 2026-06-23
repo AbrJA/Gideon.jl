@@ -30,14 +30,14 @@ This avoids the O(n_items × d²) cost per user and replaces it with
 O(nnz_per_user × d² + d³) per user, which is dramatically faster for sparse data.
 
 # Solver Options
-- `:cholesky` — exact solve via Cholesky decomposition, O(d³) per user. Best for d ≤ 128.
-- `:cg` — approximate solve via Conjugate Gradient, O(d² × cg_steps) per user.
+- `CHOLESKY` — exact solve via Cholesky decomposition, O(d³) per user. Best for d ≤ 128.
+- `CONJUGATE_GRADIENT` — approximate solve via Conjugate Gradient, O(d² × cg_steps) per user.
   Best for large d (≥ 128). Uses warm-start from previous iteration's solution.
 
 # Constructor
 ```julia
 IALS(; rank=64, λ=0.01, α=40.0, max_iter=15, convergence_tol=0.005,
-       solver=:cholesky, cg_steps=3, verbose=true)
+       solver=CHOLESKY, cg_steps=3, verbose=true)
 ```
 
 # Fields
@@ -46,8 +46,8 @@ IALS(; rank=64, λ=0.01, α=40.0, max_iter=15, convergence_tol=0.005,
 - `α::T` — confidence scaling: c_{ui} = 1 + α·r_{ui}
 - `max_iter::Int` — maximum ALS iterations
 - `convergence_tol::T` — relative change in loss for early stopping (-1 disables)
-- `solver::Symbol` — `:cholesky` or `:cg`
-- `cg_steps::Int` — CG inner iterations (only for `:cg` solver)
+- `solver::ALSSolver` — `CHOLESKY` or `CONJUGATE_GRADIENT`
+- `cg_steps::Int` — CG inner iterations (only for `CONJUGATE_GRADIENT` solver)
 - `user_factors::Matrix{T}` — (rank × n_users) after fitting
 - `item_factors::Matrix{T}` — (rank × n_items) after fitting
 """
@@ -57,7 +57,7 @@ mutable struct IALS{T<:AbstractFloat} <: AbstractMatrixFactorization
     α::T
     max_iter::Int
     convergence_tol::T
-    solver::Symbol
+    solver::ALSSolver
     cg_steps::Int
     verbose::Bool
     # Factors (rank × n)
@@ -72,7 +72,7 @@ function IALS(;
     α::Float64 = 40.0,
     max_iter::Int = 15,
     convergence_tol::Float64 = 0.005,
-    solver::Symbol = :cholesky,
+    solver::ALSSolver = CHOLESKY,
     cg_steps::Int = 3,
     verbose::Bool = true,
     dtype::Type{<:AbstractFloat} = Float32,
@@ -80,7 +80,7 @@ function IALS(;
     @assert rank >= 1
     @assert λ >= 0.0
     @assert α >= 0.0
-    @assert solver in (:cholesky, :cg)
+    @assert solver in (CHOLESKY, CONJUGATE_GRADIENT)
     @assert cg_steps >= 1
     T = dtype
     IALS{T}(rank, T(λ), T(α), max_iter, T(convergence_tol), solver, cg_steps, verbose,
@@ -142,7 +142,7 @@ function fit!(model::IALS{T}, X::SparseMatrixCSC{Tv,Ti};
     Z_bufs = [Matrix{T}(undef, k, max_nnz) for _ in 1:nt]
     w_bufs = [Vector{T}(undef, 2 * max_nnz) for _ in 1:nt]
 
-    use_cg = model.solver == :cg
+    use_cg = model.solver == CONJUGATE_GRADIENT
     cg_steps = model.cg_steps
 
     for iter in 1:model.max_iter

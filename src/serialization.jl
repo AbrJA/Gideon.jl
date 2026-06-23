@@ -34,6 +34,10 @@ end
 
 Deserialize a model from disk. Verifies the version header.
 
+!!! warning "Security"
+    Only load models from trusted sources. Julia's `Serialization` module
+    can execute arbitrary code during deserialization.
+
 # Example
 ```julia
 model = load_model("my_model.jls")

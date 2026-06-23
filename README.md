@@ -173,7 +173,7 @@ fm = FactorizationMachine(
     learning_rate_v = 0.05,
     λ_w            = 1e-5,
     λ_v            = 1e-5,
-    family         = :binomial,
+    family         = BINOMIAL,
 )
 
 partial_fit!(fm, X, y; rng)
@@ -339,17 +339,24 @@ using Gideon, SparseArrays
 X = sprand(1000, 500, 0.02)
 
 # Temporal train/test split
-X_train, X_test = temporal_split(X; ratio=0.8)
+X_train, X_test = temporal_split(X; test_fraction=0.2)
 
 # Grid search over hyperparameters
-best = grid_search(WRMF, X_train, X_test;
-    params = (rank=[16, 32, 64], λ=[0.01, 0.1, 1.0]),
-    metric = :ndcg, k = 10)
+best_params, best_score, results = grid_search(
+    p -> WRMF(rank=p.rank, λ=p.λ, α=40.0, max_iter=10, verbose=false),
+    X,
+    Dict(:rank => [16, 32, 64], :λ => [0.01, 0.1, 1.0]);
+    k=10, metric=ndcg_at_k
+)
 
 # Random search with budget
-best = random_search(WRMF, X_train, X_test;
-    params = (rank=16:128, λ=LogRange(1e-4, 1.0)),
-    n_trials = 20, metric = :ndcg, k = 10)
+best_params, best_score, _ = random_search(
+    p -> WRMF(rank=p.rank, λ=p.λ, α=40.0, max_iter=10, verbose=false),
+    X,
+    Dict(:rank => rng -> rand(rng, [16, 32, 64, 128]),
+         :λ   => rng -> 10.0^(rand(rng)*3 - 2));
+    n_trials=20, k=10, metric=ndcg_at_k
+)
 ```
 
 ---

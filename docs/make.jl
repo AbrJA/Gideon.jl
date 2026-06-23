@@ -13,6 +13,6 @@ makedocs(
 )
 
 deploydocs(
-    repo = "github.com/ajaimes/Gideon.jl.git",
+    repo = "github.com/AbrJA/Gideon.jl.git",
     push_preview = true,
 )

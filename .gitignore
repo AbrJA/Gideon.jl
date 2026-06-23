@@ -2,6 +2,8 @@ Manifest.toml
 *.jl.cov
 *.jl.*.cov
 *.jl.mem
+*.bak
+*.log
 /docs/build/
 /docs/Manifest.toml
 
