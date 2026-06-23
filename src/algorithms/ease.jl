@@ -46,8 +46,8 @@ preds = predict(model, X; k=10)
 ```
 """
 mutable struct EASE{T<:AbstractFloat} <: AbstractSparseModel
-    λ::T
-    verbose::Bool
+    const λ::T
+    const verbose::Bool
     B::Matrix{T}
     is_fitted::Bool
 end
@@ -70,7 +70,7 @@ Complexity: O(n_items² × n_users) for XᵀX, then O(n_items³) for the inverse
 Memory: O(n_items²) for the weight matrix B.
 """
 function fit!(model::EASE{T}, X::SparseMatrixCSC{Tv,Ti};
-              kwargs...) where {T,Tv,Ti}
+              rng::AbstractRNG=Random.default_rng()) where {T,Tv,Ti}
     n_users, n_items = size(X)
 
     model.verbose && @info "[EASE] Computing Gram matrix ($(n_items) items)..."

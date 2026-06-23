@@ -50,17 +50,17 @@ BPR(; rank=64, λ_user=0.01, λ_pos=0.01, λ_neg=0.01,
 - `convergence_tol::T` — AUC-based early stopping tolerance (-1 disables)
 """
 mutable struct BPR{T<:AbstractFloat} <: AbstractMatrixFactorization
-    rank::Int
-    λ_user::T
-    λ_pos::T
-    λ_neg::T
+    const rank::Int
+    const λ_user::T
+    const λ_pos::T
+    const λ_neg::T
     learning_rate::T
-    max_iter::Int
-    n_samples::Int
-    negative_sampling::Symbol
-    dns_candidates::Int
-    convergence_tol::T
-    verbose::Bool
+    const max_iter::Int
+    const n_samples::Int
+    const negative_sampling::Symbol
+    const dns_candidates::Int
+    const convergence_tol::T
+    const verbose::Bool
     # Factors
     user_factors::Matrix{T}
     item_factors::Matrix{T}
@@ -108,7 +108,8 @@ writes to shared factor matrices — safe for sparse problems where collision
 probability is low.
 """
 function fit!(model::BPR{T}, X::SparseMatrixCSC{Tv,Ti};
-              rng::AbstractRNG = Random.default_rng()) where {T,Tv,Ti}
+              rng::AbstractRNG = Random.default_rng(),
+              callbacks::Vector{<:AbstractCallback} = AbstractCallback[]) where {T,Tv,Ti}
     n_users, n_items = size(X)
     k = model.rank
 
@@ -259,6 +260,11 @@ function fit!(model::BPR{T}, X::SparseMatrixCSC{Tv,Ti};
         if record!(monitor, avg_loss)
             model.verbose && @info "[BPR] converged at epoch $epoch"
             break
+        end
+
+        if !isempty(callbacks)
+            info = CallbackInfo(epoch, Float64(avg_loss), total_seconds, model)
+            run_callbacks(callbacks, info) && break
         end
     end
 

@@ -58,15 +58,15 @@ scores = predict(model, X; k=10)
 ```
 """
 mutable struct WRMF{T<:AbstractFloat} <: AbstractMatrixFactorization
-    rank::Int
-    λ::T
-    α::T
-    max_iter::Int
-    convergence_tol::T
-    solver::ALSSolver
-    cg_steps::Int
-    feedback::FeedbackType
-    verbose::Bool
+    const rank::Int
+    const λ::T
+    const α::T
+    const max_iter::Int
+    const convergence_tol::T
+    const solver::ALSSolver
+    const cg_steps::Int
+    const feedback::FeedbackType
+    const verbose::Bool
     user_factors::Matrix{T}
     item_factors::Matrix{T}
     is_fitted::Bool
@@ -115,7 +115,8 @@ Fit the WRMF model on user-item sparse matrix `X` (n_users × n_items).
 function fit!(model::WRMF{T}, X::SparseMatrixCSC{Tv,Ti};
               rng::AbstractRNG = Random.default_rng(),
               U_init::Union{Nothing, Matrix{T}} = nothing,
-              V_init::Union{Nothing, Matrix{T}} = nothing) where {T,Tv,Ti}
+              V_init::Union{Nothing, Matrix{T}} = nothing,
+              callbacks::Vector{<:AbstractCallback} = AbstractCallback[]) where {T,Tv,Ti}
     n_users, n_items = size(X)
     k = model.rank
 
@@ -148,6 +149,11 @@ function fit!(model::WRMF{T}, X::SparseMatrixCSC{Tv,Ti};
         if record!(monitor, loss)
             model.verbose && @info "[WRMF] converged at iteration $iter"
             break
+        end
+
+        if !isempty(callbacks)
+            info = CallbackInfo(iter, Float64(loss), total_seconds, model)
+            run_callbacks(callbacks, info) && break
         end
     end
     model.is_fitted = true

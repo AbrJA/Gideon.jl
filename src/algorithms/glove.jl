@@ -40,15 +40,15 @@ embeddings = get_embeddings(model)
 ```
 """
 mutable struct GloVe{T<:AbstractFloat} <: AbstractMatrixFactorization
-    rank::Int
-    x_max::T
+    const rank::Int
+    const x_max::T
     learning_rate::T
-    α::T
-    λ::T
-    max_iter::Int
-    convergence_tol::T
-    shuffle::Bool
-    verbose::Bool
+    const α::T
+    const λ::T
+    const max_iter::Int
+    const convergence_tol::T
+    const shuffle::Bool
+    const verbose::Bool
     # Embeddings (rank × n)
     W_main::Matrix{T}
     W_ctx::Matrix{T}
@@ -101,7 +101,8 @@ Uses Hogwild-style parallel SGD with AdaGrad.
 function fit!(model::GloVe{T}, X::SparseMatrixCSC{Tv,Ti};
               n_iter::Int = model.max_iter,
               convergence_tol::Float64 = model.convergence_tol,
-              rng::AbstractRNG = Random.default_rng()) where {T,Tv,Ti}
+              rng::AbstractRNG = Random.default_rng(),
+              callbacks::Vector{<:AbstractCallback} = AbstractCallback[]) where {T,Tv,Ti}
     n = size(X, 1)
     size(X, 1) == size(X, 2) || throw(ArgumentError("GloVe requires a square co-occurrence matrix, got $(size(X, 1))×$(size(X, 2))"))
     all(x -> x > 0, nonzeros(X)) || throw(ArgumentError("All co-occurrence values must be positive"))
@@ -151,6 +152,11 @@ function fit!(model::GloVe{T}, X::SparseMatrixCSC{Tv,Ti};
         if record!(monitor, avg_cost)
             model.verbose && @info "[GloVe] converged at iteration $iter"
             break
+        end
+
+        if !isempty(callbacks)
+            info = CallbackInfo(iter, Float64(avg_cost), total_seconds, model)
+            run_callbacks(callbacks, info) && break
         end
     end
     model.is_fitted = true

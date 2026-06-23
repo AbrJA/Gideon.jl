@@ -4,7 +4,6 @@ using LinearAlgebra
 using SparseArrays
 using SparseMatricesCSR
 using Random
-using Logging
 using Printf
 using Serialization
 using PrecompileTools

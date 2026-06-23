@@ -34,12 +34,12 @@ SLIM(; λ₁=0.01, λ₂=0.1, max_iter=50, convergence_tol=1e-4, verbose=true)
 - `nonneg::Bool` — enforce non-negative weights (default: true)
 """
 mutable struct SLIM{T<:AbstractFloat} <: AbstractSparseModel
-    λ₁::T
-    λ₂::T
-    max_iter::Int
-    convergence_tol::T
-    nonneg::Bool
-    verbose::Bool
+    const λ₁::T
+    const λ₂::T
+    const max_iter::Int
+    const convergence_tol::T
+    const nonneg::Bool
+    const verbose::Bool
     W::SparseMatrixCSC{T,Int}
     is_fitted::Bool
 end
@@ -70,7 +70,7 @@ Fit SLIM on interaction matrix `X` (users × items).
 Solves n_items independent elastic net problems via coordinate descent.
 """
 function fit!(model::SLIM{T}, X::SparseMatrixCSC{Tv,Ti};
-              kwargs...) where {T,Tv,Ti}
+              rng::AbstractRNG=Random.default_rng()) where {T,Tv,Ti}
     n_users, n_items = size(X)
 
     # Precompute XᵀX (Gram matrix) and column norms

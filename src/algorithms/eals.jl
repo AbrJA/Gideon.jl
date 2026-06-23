@@ -63,13 +63,13 @@ preds = predict(model, X; k=10)
 ```
 """
 mutable struct EALS{T<:AbstractFloat} <: AbstractMatrixFactorization
-    rank::Int
-    λ::T
-    w0::T
-    max_iter::Int
-    convergence_tol::T
-    popularity_exponent::T
-    verbose::Bool
+    const rank::Int
+    const λ::T
+    const w0::T
+    const max_iter::Int
+    const convergence_tol::T
+    const popularity_exponent::T
+    const verbose::Bool
     # Factors (rank × n)
     user_factors::Matrix{T}
     item_factors::Matrix{T}
@@ -112,7 +112,8 @@ weighting for the missing (unobserved) entries.
 function fit!(model::EALS{T}, X::SparseMatrixCSC{Tv,Ti};
               rng::AbstractRNG = Random.default_rng(),
               U_init::Union{Nothing,Matrix{T}} = nothing,
-              V_init::Union{Nothing,Matrix{T}} = nothing) where {T,Tv,Ti}
+              V_init::Union{Nothing,Matrix{T}} = nothing,
+              callbacks::Vector{<:AbstractCallback} = AbstractCallback[]) where {T,Tv,Ti}
     n_users, n_items = size(X)
     k = model.rank
 
@@ -181,6 +182,11 @@ function fit!(model::EALS{T}, X::SparseMatrixCSC{Tv,Ti};
             model.verbose && @info "[eALS] converged at iteration $iter"
             break
         end
+
+        if !isempty(callbacks)
+            info = CallbackInfo(iter, Float64(loss), total_seconds, model)
+            run_callbacks(callbacks, info) && break
+        end
     end
 
     model.is_fitted = true
@@ -247,15 +253,20 @@ end
 Compute weighted Gramian: S = Σ_j c_j * v_j * v_j^T
 """
 function _eals_weighted_gramian(V::Matrix{T}, c::Vector{T}, k::Int, n::Int) where {T}
-    S = zeros(T, k, k)
+    # Compute V * Diag(c) * V' via BLAS syrk: (V .* sqrt(c)') * (V .* sqrt(c)')'
+    Vc = similar(V)  # k × n
     @inbounds for j in 1:n
-        cj = c[j]
-        for q in 1:k
-            vq = V[q, j]
-            cvq = cj * vq
-            for p in 1:k
-                S[p, q] += V[p, j] * cvq
-            end
+        sc = sqrt(c[j])
+        @simd for p in 1:k
+            Vc[p, j] = V[p, j] * sc
+        end
+    end
+    S = Matrix{T}(undef, k, k)
+    BLAS.syrk!('U', 'N', one(T), Vc, zero(T), S)
+    # Fill lower triangle from upper
+    @inbounds for q in 1:k
+        for p in (q+1):k
+            S[p, q] = S[q, p]
         end
     end
     S

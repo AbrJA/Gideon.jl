@@ -52,14 +52,14 @@ IALS(; rank=64, λ=0.01, α=40.0, max_iter=15, convergence_tol=0.005,
 - `item_factors::Matrix{T}` — (rank × n_items) after fitting
 """
 mutable struct IALS{T<:AbstractFloat} <: AbstractMatrixFactorization
-    rank::Int
-    λ::T
-    α::T
-    max_iter::Int
-    convergence_tol::T
-    solver::ALSSolver
-    cg_steps::Int
-    verbose::Bool
+    const rank::Int
+    const λ::T
+    const α::T
+    const max_iter::Int
+    const convergence_tol::T
+    const solver::ALSSolver
+    const cg_steps::Int
+    const verbose::Bool
     # Factors (rank × n)
     user_factors::Matrix{T}
     item_factors::Matrix{T}
@@ -102,7 +102,8 @@ per iteration, then adds per-user diagonal corrections from non-zero entries.
 function fit!(model::IALS{T}, X::SparseMatrixCSC{Tv,Ti};
               rng::AbstractRNG = Random.default_rng(),
               U_init::Union{Nothing,AbstractMatrix} = nothing,
-              V_init::Union{Nothing,AbstractMatrix} = nothing) where {T,Tv,Ti}
+              V_init::Union{Nothing,AbstractMatrix} = nothing,
+              callbacks::Vector{<:AbstractCallback} = AbstractCallback[]) where {T,Tv,Ti}
     n_users, n_items = size(X)
     k = model.rank
     α = model.α
@@ -182,6 +183,11 @@ function fit!(model::IALS{T}, X::SparseMatrixCSC{Tv,Ti};
         if record!(monitor, loss)
             model.verbose && @info "[iALS] converged at iteration $iter"
             break
+        end
+
+        if !isempty(callbacks)
+            info = CallbackInfo(iter, Float64(loss), total_seconds, model)
+            run_callbacks(callbacks, info) && break
         end
     end
 

@@ -36,16 +36,16 @@ preds = predict(model, X)
 ```
 """
 mutable struct FactorizationMachine{T<:AbstractFloat} <: AbstractSparseRegression
-    rank::Int
+    const rank::Int
     learning_rate_w::T
     learning_rate_v::T
-    λ_w::T
-    λ_v::T
-    family::Family
-    intercept::Bool
-    n_iter::Int
-    convergence_tol::T
-    verbose::Bool
+    const λ_w::T
+    const λ_v::T
+    const family::Family
+    const intercept::Bool
+    const n_iter::Int
+    const convergence_tol::T
+    const verbose::Bool
     n_features::Int
     w0::T
     w::Vector{T}

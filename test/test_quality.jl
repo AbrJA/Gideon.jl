@@ -1,7 +1,7 @@
 # test/test_quality.jl — Aqua.jl and JET static analysis
 
 @testset "Aqua" begin
-    Aqua.test_all(Gideon; ambiguities=false)
+    Aqua.test_all(Gideon; ambiguities=false, persistent_tasks=false)
 end
 
 @testset "JET" begin

@@ -14,7 +14,7 @@
 
     @testset "Out-of-bounds indices with explicit dims" begin
         table = (user=[1, 5], item=[1, 2], value=[1.0, 1.0])
-        @test_throws AssertionError interactions_to_sparse(
+        @test_throws ArgumentError interactions_to_sparse(
             table; user_col=:user, item_col=:item, value_col=:value, n_users=3, n_items=2
         )
     end

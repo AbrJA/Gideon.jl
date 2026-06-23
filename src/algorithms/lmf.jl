@@ -32,14 +32,14 @@ top_items = predict(model, X; k=10)
 ```
 """
 mutable struct LMF{T<:AbstractFloat} <: AbstractMatrixFactorization
-    rank::Int
-    λ::T
-    α::T
+    const rank::Int
+    const λ::T
+    const α::T
     learning_rate::T
-    max_iter::Int
-    n_negative::Int
-    convergence_tol::T
-    verbose::Bool
+    const max_iter::Int
+    const n_negative::Int
+    const convergence_tol::T
+    const verbose::Bool
     user_factors::Matrix{T}
     item_factors::Matrix{T}
     is_fitted::Bool
@@ -72,7 +72,8 @@ Fit the LMF model on user-item interaction matrix `X` (n_users × n_items).
 Uses Hogwild!-style lock-free parallel SGD with per-interaction negative sampling.
 """
 function fit!(model::LMF{T}, X::SparseMatrixCSC{Tv,Ti};
-              rng::AbstractRNG = Random.default_rng()) where {T,Tv,Ti}
+              rng::AbstractRNG = Random.default_rng(),
+              callbacks::Vector{<:AbstractCallback} = AbstractCallback[]) where {T,Tv,Ti}
     n_users, n_items = size(X)
     k = model.rank
 
@@ -206,6 +207,11 @@ function fit!(model::LMF{T}, X::SparseMatrixCSC{Tv,Ti};
         if record!(monitor, total_loss)
             model.verbose && @info "[LMF] converged at iteration $epoch"
             break
+        end
+
+        if !isempty(callbacks)
+            info = CallbackInfo(epoch, Float64(total_loss), total_seconds, model)
+            run_callbacks(callbacks, info) && break
         end
     end
     model.is_fitted = true

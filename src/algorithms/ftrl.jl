@@ -39,13 +39,13 @@ weights = coef(model)
 """
 mutable struct FTRL{T<:AbstractFloat} <: AbstractSparseRegression
     learning_rate::T
-    learning_rate_decay::T
-    λ::T
-    l1_ratio::T
-    dropout::T
-    family::Family
-    clip_gradient::T
-    verbose::Bool
+    const learning_rate_decay::T
+    const λ::T
+    const l1_ratio::T
+    const dropout::T
+    const family::Family
+    const clip_gradient::T
+    const verbose::Bool
     n_features::Int
     z::Vector{T}
     n::Vector{T}
