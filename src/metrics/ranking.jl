@@ -19,7 +19,7 @@ function ap_at_k(predictions::AbstractMatrix{<:Integer},
                  actual::SparseMatrixCSC;
                  k::Int = size(predictions, 2))
     n_users = size(predictions, 1)
-    @assert n_users == size(actual, 1) "Row count mismatch"
+    n_users == size(actual, 1) || throw(DimensionMismatch("predictions has $n_users users but actual has $(size(actual, 1))"))
     actual_t = _transpose_for_row_access(actual)
     result = Vector{Float64}(undef, n_users)
     @inbounds for u in 1:n_users
@@ -70,7 +70,7 @@ function ndcg_at_k(predictions::AbstractMatrix{<:Integer},
                    actual::SparseMatrixCSC;
                    k::Int = size(predictions, 2))
     n_users = size(predictions, 1)
-    @assert n_users == size(actual, 1)
+    n_users == size(actual, 1) || throw(DimensionMismatch("predictions has $n_users users but actual has $(size(actual, 1))"))
     actual_t = _transpose_for_row_access(actual)
     result = Vector{Float64}(undef, n_users)
     @inbounds for u in 1:n_users
@@ -117,7 +117,7 @@ function precision_at_k(predictions::AbstractMatrix{<:Integer},
                         actual::SparseMatrixCSC;
                         k::Int = size(predictions, 2))
     n_users = size(predictions, 1)
-    @assert n_users == size(actual, 1)
+    n_users == size(actual, 1) || throw(DimensionMismatch("predictions has $n_users users but actual has $(size(actual, 1))"))
     actual_t = _transpose_for_row_access(actual)
     result = Vector{Float64}(undef, n_users)
     @inbounds for u in 1:n_users
@@ -152,7 +152,7 @@ function recall_at_k(predictions::AbstractMatrix{<:Integer},
                      actual::SparseMatrixCSC;
                      k::Int = size(predictions, 2))
     n_users = size(predictions, 1)
-    @assert n_users == size(actual, 1)
+    n_users == size(actual, 1) || throw(DimensionMismatch("predictions has $n_users users but actual has $(size(actual, 1))"))
     actual_t = _transpose_for_row_access(actual)
     result = Vector{Float64}(undef, n_users)
     @inbounds for u in 1:n_users

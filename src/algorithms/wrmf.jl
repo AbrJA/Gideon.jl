@@ -84,11 +84,11 @@ function WRMF(;
     verbose::Bool = true,
     dtype::Type{<:AbstractFloat} = Float64,
 )
-    @assert rank >= 1 "rank must be ≥ 1"
-    @assert λ >= 0.0 "λ must be non-negative"
-    @assert α >= 0.0 "α must be non-negative"
-    @assert max_iter >= 1 "max_iter must be ≥ 1"
-    @assert cg_steps >= 1 "cg_steps must be ≥ 1"
+    rank >= 1 || throw(ArgumentError("rank must be ≥ 1, got $rank"))
+    λ >= 0.0 || throw(ArgumentError("λ must be non-negative, got $λ"))
+    α >= 0.0 || throw(ArgumentError("α must be non-negative, got $α"))
+    max_iter >= 1 || throw(ArgumentError("max_iter must be ≥ 1, got $max_iter"))
+    cg_steps >= 1 || throw(ArgumentError("cg_steps must be ≥ 1, got $cg_steps"))
     T = dtype
     WRMF{T}(
         rank, T(λ), T(α), max_iter, T(convergence_tol), solver, cg_steps, feedback, verbose,
@@ -496,64 +496,15 @@ Processes users in batches to avoid allocating the full score matrix.
 """
 function predict(model::WRMF{T}, X::SparseMatrixCSC; k::Int = 10) where {T}
     model.is_fitted || error("Model not fitted. Call fit! first.")
-    n_users = size(X, 1)
-    n_items = size(model.item_factors, 2)
-    k_actual = min(k, n_items)
 
     # Use cached user factors if dimensions match (training data), else re-embed
-    if size(model.user_factors, 2) == n_users
-        user_emb = model.user_factors
+    user_emb = if size(model.user_factors, 2) == size(X, 1)
+        model.user_factors
     else
-        user_emb = transform(model, X)
+        transform(model, X)
     end
 
-    predictions = Matrix{Int}(undef, n_users, k_actual)
-
-    # Process in batches to limit memory usage
-    max_batch_mem = 2 * 1024^3  # 2 GB target
-    batch_size = max(1, min(n_users, Int(floor(max_batch_mem / (n_items * sizeof(T))))))
-
-    X_csr = to_csr(X)
-
-    # Pre-allocate buffers — scores stored as n_items × batch_size (column-per-user)
-    # so that each user's scores vector is a contiguous column (cache-friendly top-k)
-    nt = Threads.maxthreadid()
-    topk_bufs = [Vector{Int}(undef, k_actual) for _ in 1:nt]
-    scores_buf = Matrix{T}(undef, n_items, batch_size)
-
-    # Use multi-threaded BLAS for the large GEMM
-    old_blas = BLAS.get_num_threads()
-    BLAS.set_num_threads(Threads.nthreads())
-
-    for batch_start in 1:batch_size:n_users
-        batch_end = min(batch_start + batch_size - 1, n_users)
-        batch_users = batch_start:batch_end
-        n_batch = length(batch_users)
-
-        # GEMM: scores_buf[:,1:n_batch] = item_factors' * user_emb[:,batch_users]
-        # Result: n_items × n_batch, each column = scores for one user (contiguous!)
-        scores = @view scores_buf[:, 1:n_batch]
-        mul!(scores, model.item_factors', @view(user_emb[:, batch_users]))
-
-        # Mask seen items and get top-k per user (threaded)
-        Threads.@threads for local_u in 1:n_batch
-            tid = Threads.threadid()
-            global_u = batch_users[local_u]
-            @inbounds for idx in nzrange(X_csr, global_u)
-                j = Int(X_csr.colval[idx])
-                scores_buf[j, local_u] = T(-Inf)
-            end
-            col = @view scores_buf[:, local_u]
-            topk = topk_bufs[tid]
-            _topk_indices!(topk, col, k_actual)
-            @inbounds for i in 1:k_actual
-                predictions[global_u, i] = topk[i]
-            end
-        end
-    end
-
-    BLAS.set_num_threads(old_blas)
-    predictions
+    _predict_topk_batched(user_emb, model.item_factors, to_csr(X), k)
 end
 
 """
@@ -576,18 +527,5 @@ Return raw scores for specific (user, item) pairs using pre-fitted factors.
 function predict_scores(model::WRMF{T}, user_indices::AbstractVector{<:Integer},
                         item_indices::AbstractVector{<:Integer}) where {T}
     model.is_fitted || error("Model not fitted. Call fit! first.")
-    @assert length(user_indices) == length(item_indices)
-    n = length(user_indices)
-    scores = Vector{T}(undef, n)
-    k = model.rank
-    @inbounds for idx in 1:n
-        u = user_indices[idx]
-        i = item_indices[idx]
-        s = zero(T)
-        @simd for f in 1:k
-            s += model.user_factors[f, u] * model.item_factors[f, i]
-        end
-        scores[idx] = s
-    end
-    scores
+    _predict_pairwise_scores(model.user_factors, model.item_factors, user_indices, item_indices)
 end

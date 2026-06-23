@@ -61,8 +61,8 @@ function interactions_to_sparse(table;
     ni = something(n_items, maximum(items))
 
     # Validate indices
-    @assert all(u -> 1 <= u <= nu, users) "User indices must be in [1, n_users]"
-    @assert all(i -> 1 <= i <= ni, items) "Item indices must be in [1, n_items]"
+    all(u -> 1 <= u <= nu, users) || throw(ArgumentError("User indices must be in [1, $nu]"))
+    all(i -> 1 <= i <= ni, items) || throw(ArgumentError("Item indices must be in [1, $ni]"))
 
     sparse(users, items, vals, nu, ni)
 end

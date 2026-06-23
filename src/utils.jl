@@ -138,3 +138,89 @@ in descending order. Single O(n) pass, zero allocations.
     end
     nothing
 end
+
+"""
+    _predict_topk_batched(user_factors, item_factors, X_csr, k) -> Matrix{Int}
+
+Shared batched top-k prediction for bilinear matrix factorization models.
+Computes scores via GEMM in memory-bounded batches, masks seen items, and
+selects top-k per user using threaded partial sort.
+
+Returns an `n_users × k` matrix of recommended item indices (1-based).
+"""
+function _predict_topk_batched(user_factors::Matrix{T}, item_factors::Matrix{T},
+                               X_csr::SparseMatrixCSR, k::Int) where {T}
+    n_users = size(user_factors, 2)
+    n_items = size(item_factors, 2)
+    k_actual = min(k, n_items)
+
+    predictions = Matrix{Int}(undef, n_users, k_actual)
+
+    # Batch sizing: target ≤ 2 GB for score buffer
+    max_batch_mem = 2 * 1024^3
+    batch_size = max(1, min(n_users, Int(floor(max_batch_mem / (n_items * sizeof(T))))))
+
+    # Per-thread top-k buffers
+    nt = Threads.maxthreadid()
+    topk_bufs = [Vector{Int}(undef, k_actual) for _ in 1:nt]
+    scores_buf = Matrix{T}(undef, n_items, batch_size)
+
+    # Use multi-threaded BLAS for the large GEMM
+    old_blas = BLAS.get_num_threads()
+    BLAS.set_num_threads(Threads.nthreads())
+
+    for batch_start in 1:batch_size:n_users
+        batch_end = min(batch_start + batch_size - 1, n_users)
+        batch_users = batch_start:batch_end
+        n_batch = length(batch_users)
+
+        # GEMM: scores_buf[:,1:n_batch] = item_factors' * user_factors[:,batch_users]
+        scores = @view scores_buf[:, 1:n_batch]
+        mul!(scores, item_factors', @view(user_factors[:, batch_users]))
+
+        # Mask seen items and extract top-k per user (threaded)
+        Threads.@threads for local_u in 1:n_batch
+            tid = Threads.threadid()
+            global_u = batch_users[local_u]
+            @inbounds for idx in nzrange(X_csr, global_u)
+                j = Int(X_csr.colval[idx])
+                scores_buf[j, local_u] = T(-Inf)
+            end
+            col = @view scores_buf[:, local_u]
+            topk = topk_bufs[tid]
+            _topk_indices!(topk, col, k_actual)
+            @inbounds for i in 1:k_actual
+                predictions[global_u, i] = topk[i]
+            end
+        end
+    end
+
+    BLAS.set_num_threads(old_blas)
+    predictions
+end
+
+"""
+    _predict_pairwise_scores(user_factors, item_factors, user_indices, item_indices) -> Vector
+
+Compute scores for specific (user, item) pairs via inner products.
+Shared implementation for bilinear MF models.
+"""
+function _predict_pairwise_scores(user_factors::Matrix{T}, item_factors::Matrix{T},
+                                  user_indices::AbstractVector{<:Integer},
+                                  item_indices::AbstractVector{<:Integer}) where {T}
+    length(user_indices) == length(item_indices) ||
+        throw(ArgumentError("user_indices and item_indices must have the same length"))
+    n = length(user_indices)
+    k = size(user_factors, 1)
+    scores = Vector{T}(undef, n)
+    @inbounds for idx in 1:n
+        u = user_indices[idx]
+        i = item_indices[idx]
+        s = zero(T)
+        @simd for f in 1:k
+            s += user_factors[f, u] * item_factors[f, i]
+        end
+        scores[idx] = s
+    end
+    scores
+end

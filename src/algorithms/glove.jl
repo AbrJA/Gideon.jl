@@ -74,9 +74,9 @@ function GloVe(;
     shuffle::Bool = false,
     verbose::Bool = true,
 )
-    @assert rank >= 1 "rank must be ≥ 1"
-    @assert x_max > 0.0 "x_max must be positive"
-    @assert learning_rate > 0.0 "learning_rate must be positive"
+    rank >= 1 || throw(ArgumentError("rank must be ≥ 1, got $rank"))
+    x_max > 0.0 || throw(ArgumentError("x_max must be positive, got $x_max"))
+    learning_rate > 0.0 || throw(ArgumentError("learning_rate must be positive, got $learning_rate"))
     T = Float64
     GloVe{T}(
         rank, x_max, learning_rate, α, λ, max_iter, convergence_tol, shuffle, verbose,
@@ -103,8 +103,8 @@ function fit!(model::GloVe{T}, X::SparseMatrixCSC{Tv,Ti};
               convergence_tol::Float64 = model.convergence_tol,
               rng::AbstractRNG = Random.default_rng()) where {T,Tv,Ti}
     n = size(X, 1)
-    @assert size(X, 1) == size(X, 2) "GloVe requires a square co-occurrence matrix"
-    @assert all(x -> x > 0, nonzeros(X)) "All co-occurrence values must be positive"
+    size(X, 1) == size(X, 2) || throw(ArgumentError("GloVe requires a square co-occurrence matrix, got $(size(X, 1))×$(size(X, 2))"))
+    all(x -> x > 0, nonzeros(X)) || throw(ArgumentError("All co-occurrence values must be positive"))
 
     k = model.rank
 

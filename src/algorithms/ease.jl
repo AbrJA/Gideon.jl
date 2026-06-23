@@ -53,7 +53,7 @@ mutable struct EASE{T<:AbstractFloat} <: AbstractSparseModel
 end
 
 function EASE(; λ::Float64=500.0, verbose::Bool=true)
-    @assert λ > 0.0 "λ must be positive"
+    λ > 0.0 || throw(ArgumentError("λ must be positive, got $λ"))
     EASE{Float64}(λ, verbose, Matrix{Float64}(undef, 0, 0), false)
 end
 

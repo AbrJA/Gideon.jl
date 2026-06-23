@@ -52,8 +52,8 @@ function SLIM(;
     nonneg::Bool = true,
     verbose::Bool = true,
 )
-    @assert λ₁ >= 0.0 "λ₁ must be non-negative"
-    @assert λ₂ >= 0.0 "λ₂ must be non-negative"
+    λ₁ >= 0.0 || throw(ArgumentError("λ₁ must be non-negative, got $λ₁"))
+    λ₂ >= 0.0 || throw(ArgumentError("λ₂ must be non-negative, got $λ₂"))
     T = Float64
     SLIM{T}(λ₁, λ₂, max_iter, convergence_tol, nonneg, verbose,
             spzeros(T, 0, 0), false)

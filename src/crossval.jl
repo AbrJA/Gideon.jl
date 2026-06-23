@@ -13,7 +13,7 @@ Returns `(X_train, X_test)` as sparse matrices.
 function temporal_split(X::SparseMatrixCSC{Tv,Ti};
                         test_fraction::Float64=0.2,
                         rng::AbstractRNG=Random.default_rng()) where {Tv,Ti}
-    @assert 0.0 < test_fraction < 1.0
+    0.0 < test_fraction < 1.0 || throw(ArgumentError("test_fraction must be in (0, 1), got $test_fraction"))
 
     n_users, n_items = size(X)
     train_rows = Int[]; train_cols = Int[]; train_vals = Tv[]
@@ -89,7 +89,7 @@ function cv_evaluate(model_fn, X::SparseMatrixCSC;
                      k::Int=10,
                      metric=map_at_k,
                      rng::AbstractRNG=Random.default_rng())
-    @assert n_folds >= 2
+    n_folds >= 2 || throw(ArgumentError("n_folds must be ≥ 2, got $n_folds"))
 
     fold_scores = Float64[]
 

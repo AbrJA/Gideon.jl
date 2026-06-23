@@ -82,10 +82,10 @@ function BPR(;
     verbose::Bool = true,
     dtype::Type{<:AbstractFloat} = Float32,
 )
-    @assert rank >= 1
-    @assert learning_rate > 0.0
-    @assert negative_sampling in (:uniform, :popular, :dns)
-    @assert dns_candidates >= 1
+    rank >= 1 || throw(ArgumentError("rank must be ≥ 1, got $rank"))
+    learning_rate > 0.0 || throw(ArgumentError("learning_rate must be positive, got $learning_rate"))
+    negative_sampling in (:uniform, :popular, :dns) || throw(ArgumentError("negative_sampling must be :uniform, :popular, or :dns, got :$negative_sampling"))
+    dns_candidates >= 1 || throw(ArgumentError("dns_candidates must be ≥ 1, got $dns_candidates"))
     T = dtype
     BPR{T}(rank, T(λ_user), T(λ_pos), T(λ_neg), T(learning_rate), max_iter, n_samples,
             negative_sampling, dns_candidates, T(convergence_tol), verbose,
@@ -405,54 +405,7 @@ Uses batched GEMM for efficient score computation.
 """
 function predict(model::BPR{T}, X::SparseMatrixCSC; k::Int=10) where {T}
     model.is_fitted || error("Model not fitted")
-    n_users = size(X, 1)
-    n_items = size(model.item_factors, 2)
-    k_out = min(k, n_items)
-
-    predictions = Matrix{Int}(undef, n_users, k_out)
-    X_csr = to_csr(X)
-
-    # Batched GEMM approach — compute scores for batches of users at once
-    max_batch_mem = 2 * 1024^3  # 2 GB target
-    batch_size = max(1, min(n_users, Int(floor(max_batch_mem / (n_items * sizeof(T))))))
-
-    # Pre-allocate buffers — n_items × batch_size so each user is a contiguous column
-    nt = Threads.maxthreadid()
-    topk_bufs = [Vector{Int}(undef, k_out) for _ in 1:nt]
-    scores_buf = Matrix{T}(undef, n_items, batch_size)
-
-    # Use multi-threaded BLAS for the large GEMM
-    old_blas = BLAS.get_num_threads()
-    BLAS.set_num_threads(Threads.nthreads())
-
-    for batch_start in 1:batch_size:n_users
-        batch_end = min(batch_start + batch_size - 1, n_users)
-        batch_users = batch_start:batch_end
-        n_batch = length(batch_users)
-
-        # GEMM: n_items × n_batch = item_factors' * user_factors[:,batch]
-        scores = @view scores_buf[:, 1:n_batch]
-        mul!(scores, model.item_factors', @view(model.user_factors[:, batch_users]))
-
-        # Mask seen items and get top-k per user (threaded)
-        Threads.@threads for local_u in 1:n_batch
-            tid = Threads.threadid()
-            global_u = batch_users[local_u]
-            @inbounds for idx in nzrange(X_csr, global_u)
-                j = Int(X_csr.colval[idx])
-                scores_buf[j, local_u] = T(-Inf)
-            end
-            col = @view scores_buf[:, local_u]
-            topk = topk_bufs[tid]
-            _topk_indices!(topk, col, k_out)
-            @inbounds for i in 1:k_out
-                predictions[global_u, i] = topk[i]
-            end
-        end
-    end
-
-    BLAS.set_num_threads(old_blas)
-    predictions
+    _predict_topk_batched(model.user_factors, model.item_factors, to_csr(X), k)
 end
 
 """
@@ -463,18 +416,5 @@ Return raw scores for specific (user, item) pairs.
 function predict_scores(model::BPR{T}, user_indices::AbstractVector{<:Integer},
                         item_indices::AbstractVector{<:Integer}) where {T}
     model.is_fitted || error("Model not fitted")
-    @assert length(user_indices) == length(item_indices)
-    n = length(user_indices)
-    scores = Vector{T}(undef, n)
-    k = size(model.user_factors, 1)
-    @inbounds for idx in 1:n
-        u = user_indices[idx]
-        i = item_indices[idx]
-        s = zero(T)
-        @simd for f in 1:k
-            s += model.user_factors[f, u] * model.item_factors[f, i]
-        end
-        scores[idx] = s
-    end
-    scores
+    _predict_pairwise_scores(model.user_factors, model.item_factors, user_indices, item_indices)
 end

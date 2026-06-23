@@ -67,8 +67,8 @@ function FactorizationMachine(;
     convergence_tol::Float64 = -1.0,
     verbose::Bool = true,
 )
-    @assert rank >= 1 "rank must be ≥ 1"
-    @assert family in (BINOMIAL, GAUSSIAN) "FM supports BINOMIAL or GAUSSIAN"
+    rank >= 1 || throw(ArgumentError("rank must be ≥ 1, got $rank"))
+    family in (BINOMIAL, GAUSSIAN) || throw(ArgumentError("FM supports BINOMIAL or GAUSSIAN, got $family"))
     FactorizationMachine{Float64}(
         rank, learning_rate_w, learning_rate_v, λ_w, λ_v, family, intercept,
         n_iter, convergence_tol, verbose,
@@ -92,7 +92,7 @@ function partial_fit!(model::FactorizationMachine{T}, X::SparseMatrixCSC{Tv,Ti},
                       rng::AbstractRNG = Random.default_rng()) where {T,Tv,Ti}
     iter_start = time_ns()
     n_samples, n_features = size(X)
-    @assert n_samples == length(y)
+    n_samples == length(y) || throw(DimensionMismatch("X rows ($n_samples) ≠ length(y) ($(length(y)))"))
 
     if !model.is_initialized
         model.n_features = n_features
@@ -103,7 +103,7 @@ function partial_fit!(model::FactorizationMachine{T}, X::SparseMatrixCSC{Tv,Ti},
         model.grad_v2 = ones(T, model.rank, n_features)
         model.is_initialized = true
     end
-    @assert n_features == model.n_features "Feature dimension mismatch"
+    n_features == model.n_features || throw(DimensionMismatch("Feature dimension mismatch: got $n_features, expected $(model.n_features)"))
 
     Xt = SparseMatrixCSC(X')
     rv = rowvals(Xt)
@@ -237,7 +237,7 @@ Generate predictions. Output depends on family:
 function predict(model::FactorizationMachine{T}, X::SparseMatrixCSC) where {T}
     model.is_initialized || error("Model not fitted")
     n_samples = size(X, 1)
-    @assert size(X, 2) == model.n_features "Feature dimension mismatch"
+    size(X, 2) == model.n_features || throw(DimensionMismatch("Feature dimension mismatch: expected $(model.n_features), got $(size(X, 2))"))
 
     Xt = SparseMatrixCSC(X')
     rv = rowvals(Xt)

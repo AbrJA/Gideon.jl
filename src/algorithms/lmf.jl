@@ -56,10 +56,10 @@ function LMF(;
     verbose::Bool = true,
     dtype::Type{<:AbstractFloat} = Float64,
 )
-    @assert rank >= 1 "rank must be ≥ 1"
-    @assert λ >= 0.0 "λ must be non-negative"
-    @assert learning_rate > 0.0 "learning_rate must be positive"
-    @assert n_negative >= 1 "n_negative must be ≥ 1"
+    rank >= 1 || throw(ArgumentError("rank must be ≥ 1, got $rank"))
+    λ >= 0.0 || throw(ArgumentError("λ must be non-negative, got $λ"))
+    learning_rate > 0.0 || throw(ArgumentError("learning_rate must be positive, got $learning_rate"))
+    n_negative >= 1 || throw(ArgumentError("n_negative must be ≥ 1, got $n_negative"))
     Td = dtype
     LMF{Td}(rank, Td(λ), Td(α), Td(learning_rate), max_iter, n_negative, Td(convergence_tol),
             verbose, Matrix{Td}(undef,0,0), Matrix{Td}(undef,0,0), false)
@@ -219,50 +219,7 @@ Return top-k item indices for each user. Returns `n_users × k` matrix.
 """
 function predict(model::LMF{T}, X::SparseMatrixCSC; k::Int = 10) where {T}
     model.is_fitted || error("Model not fitted")
-    n_users = size(X, 1)
-    n_items = size(model.item_factors, 2)
-    k_actual = min(k, n_items)
-    predictions = Matrix{Int}(undef, n_users, k_actual)
-
-    X_csr = to_csr(X)
-
-    # Batched GEMM approach
-    max_batch_mem = 2 * 1024^3
-    batch_size = max(1, min(n_users, Int(floor(max_batch_mem / (n_items * sizeof(T))))))
-
-    nt = Threads.maxthreadid()
-    topk_bufs = [Vector{Int}(undef, k_actual) for _ in 1:nt]
-    scores_buf = Matrix{T}(undef, n_items, batch_size)
-
-    old_blas = BLAS.get_num_threads()
-    BLAS.set_num_threads(Threads.nthreads())
-
-    for batch_start in 1:batch_size:n_users
-        batch_end = min(batch_start + batch_size - 1, n_users)
-        batch_users = batch_start:batch_end
-        n_batch = length(batch_users)
-
-        scores = @view scores_buf[:, 1:n_batch]
-        mul!(scores, model.item_factors', @view(model.user_factors[:, batch_users]))
-
-        Threads.@threads for local_u in 1:n_batch
-            tid = Threads.threadid()
-            global_u = batch_users[local_u]
-            @inbounds for idx in nzrange(X_csr, global_u)
-                j = Int(X_csr.colval[idx])
-                scores_buf[j, local_u] = T(-Inf)
-            end
-            col = @view scores_buf[:, local_u]
-            topk = topk_bufs[tid]
-            _topk_indices!(topk, col, k_actual)
-            @inbounds for i in 1:k_actual
-                predictions[global_u, i] = topk[i]
-            end
-        end
-    end
-
-    BLAS.set_num_threads(old_blas)
-    predictions
+    _predict_topk_batched(model.user_factors, model.item_factors, to_csr(X), k)
 end
 
 """
