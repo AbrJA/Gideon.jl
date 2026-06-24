@@ -15,14 +15,14 @@
 Follow The Regularized Leader proximal SGD for generalized linear models on sparse data.
 
 Supports three families:
-- `BINOMIAL` — logistic regression (predictions in [0,1])
-- `GAUSSIAN` — linear regression (identity link)
-- `POISSON`  — Poisson regression (log link, predictions > 0)
+- `Binomial()` — logistic regression (predictions in [0,1])
+- `Gaussian()` — linear regression (identity link)
+- `Poisson()`  — Poisson regression (log link, predictions > 0)
 
 # Constructor
 ```julia
 OnlineRegressor(; learning_rate=0.1, learning_rate_decay=0.5, λ=0.0, l1_ratio=1.0,
-       dropout=0.0, family=BINOMIAL, clip_gradient=1000.0, verbose=true)
+       dropout=0.0, family=Binomial(), clip_gradient=1000.0, verbose=true)
 ```
 
 # Example
@@ -31,7 +31,7 @@ using SparseArrays, Gideon
 
 X = sprand(10000, 1000, 0.01)
 y = rand([0.0, 1.0], 10000)
-model = OnlineRegressor(learning_rate=0.1, λ=0.01, l1_ratio=0.5, family=BINOMIAL, max_iter=5)
+model = OnlineRegressor(learning_rate=0.1, λ=0.01, l1_ratio=0.5, family=Binomial(), max_iter=5)
 fit!(model, X, y)
 predictions = predict(model, X)
 weights = coef(model)
@@ -59,7 +59,7 @@ function OnlineRegressor(;
     λ::Float64 = 0.0,
     l1_ratio::Float64 = 1.0,
     dropout::Float64 = 0.0,
-    family::Family = BINOMIAL,
+    family::Family = Binomial(),
     clip_gradient::Float64 = 1000.0,
     max_iter::Int = 1,
     verbose::Bool = true,
@@ -185,9 +185,9 @@ end
     predict(model::OnlineRegressor, X) -> Vector
 
 Generate predictions using the fitted model. Output depends on family:
-- `BINOMIAL` → probabilities in [0,1]
-- `GAUSSIAN` → real-valued predictions
-- `POISSON`  → positive count predictions
+- `Binomial()` → probabilities in [0,1]
+- `Gaussian()` → real-valued predictions
+- `Poisson()`  → positive count predictions
 """
 function predict(model::OnlineRegressor{T}, X::SparseMatrixCSC) where {T}
     model.is_initialized || error("Model not fitted")

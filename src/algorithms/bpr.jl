@@ -24,16 +24,16 @@ Learns user and item embeddings optimized for ranking (AUC) rather than
 pointwise prediction. Uses SGD with negative sampling of (user, pos, neg) triplets.
 
 # Negative Sampling Strategies
-- `UNIFORM` — standard uniform random sampling (Rendle et al. 2009)
-- `POPULAR` — popularity-biased sampling (items sampled proportional to sqrt of frequency)
-- `DYNAMIC` — Dynamic Negative Sampling: sample `dns_candidates` negatives, pick the
+- `Uniform()` — standard uniform random sampling (Rendle et al. 2009)
+- `Popular()` — popularity-biased sampling (items sampled proportional to sqrt of frequency)
+- `Dynamic()` — Dynamic Negative Sampling: sample `dns_candidates` negatives, pick the
   one with highest score as the "hardest" negative (Zhang et al. 2013)
 
 # Constructor
 ```julia
 BayesianPersonalizedRanking(; rank=64, λ_user=0.01, λ_pos=0.01, λ_neg=0.01,
       learning_rate=0.05, max_iter=100, n_samples=0,
-      negative_sampling=UNIFORM, dns_candidates=5,
+      negative_sampling=Uniform(), dns_candidates=5,
       convergence_tol=-1.0, verbose=true)
 ```
 
@@ -45,8 +45,8 @@ BayesianPersonalizedRanking(; rank=64, λ_user=0.01, λ_pos=0.01, λ_neg=0.01,
 - `learning_rate::T` — SGD step size
 - `max_iter::Int` — number of epochs
 - `n_samples::Int` — samples per epoch (0 = nnz(X))
-- `negative_sampling::NegativeSampling` — `UNIFORM`, `POPULAR`, or `DYNAMIC`
-- `dns_candidates::Int` — number of candidates for DYNAMIC strategy
+- `negative_sampling::NegativeSampling` — `Uniform()`, `Popular()`, or `Dynamic()`
+- `dns_candidates::Int` — number of candidates for Dynamic() strategy
 - `convergence_tol::T` — AUC-based early stopping tolerance (-1 disables)
 """
 mutable struct BayesianPersonalizedRanking{T<:AbstractFloat} <: AbstractMatrixFactorization
@@ -76,7 +76,7 @@ function BayesianPersonalizedRanking(;
     learning_rate::Float64 = 0.05,
     max_iter::Int = 100,
     n_samples::Int = 0,
-    negative_sampling::NegativeSampling = UNIFORM,
+    negative_sampling::NegativeSampling = Uniform(),
     dns_candidates::Int = 5,
     convergence_tol::Float64 = -1.0,
     verbose::Bool = true,
@@ -196,7 +196,7 @@ function fit!(model::BayesianPersonalizedRanking{T}, X::SparseMatrixCSC{Tv,Ti};
                 # Sample negative item (inline for uniform; call function for others)
                 local sorted_items = user_item_sorted[u]
                 local j_int::Int
-                if neg_strategy == UNIFORM
+                if neg_strategy isa Uniform
                     j = rand(local_rng, Int32(1):Int32(n_items))
                     while _insorted(sorted_items, j)
                         j = rand(local_rng, Int32(1):Int32(n_items))
@@ -281,102 +281,57 @@ function _bpr_sample_negative_fast(rng::AbstractRNG, n_items::Int,
                                    pop_cumsum::Vector{T}, pop_total::T,
                                    U::Matrix{T}, V::Matrix{T},
                                    u::Int, k::Int) where {T}
-    if strategy == UNIFORM
-        # Rejection sampling with binary search verification
-        j = rand(rng, Int32(1):Int32(n_items))
-        while _insorted(sorted_items, j)
-            j = rand(rng, Int32(1):Int32(n_items))
-        end
-        return Int(j)
-    elseif strategy == POPULAR
-        j = Int32(_sample_from_cumsum(rng, pop_cumsum, pop_total, n_items))
-        while _insorted(sorted_items, j)
-            j = Int32(_sample_from_cumsum(rng, pop_cumsum, pop_total, n_items))
-        end
-        return Int(j)
-    else  # DYNAMIC
-        best_j = Int32(0)
-        best_score = T(-Inf)
-        candidates_found = 0
-        max_tries = dns_k * 5
-        tries = 0
-        while candidates_found < dns_k && tries < max_tries
-            tries += 1
-            j = rand(rng, Int32(1):Int32(n_items))
-            _insorted(sorted_items, j) && continue
-            candidates_found += 1
-            score = zero(T)
-            @inbounds @simd for f in 1:k
-                score += U[f, u] * V[f, Int(j)]
-            end
-            if score > best_score
-                best_score = score
-                best_j = j
-            end
-        end
-        if best_j == Int32(0)
-            best_j = rand(rng, Int32(1):Int32(n_items))
-            while _insorted(sorted_items, best_j)
-                best_j = rand(rng, Int32(1):Int32(n_items))
-            end
-        end
-        return Int(best_j)
-    end
+    _bpr_sample_negative_impl(rng, n_items, sorted_items, strategy, dns_k,
+                              pop_cumsum, pop_total, U, V, u, k)
 end
 
-"""
-Legacy: Sample a negative item according to the specified strategy.
-Kept for backward compatibility with tests.
-"""
-function _bpr_sample_negative(rng::AbstractRNG, n_items::Int, items_u_set::Set{Int},
-                              strategy::Symbol, dns_k::Int,
-                              pop_cumsum::Vector{T}, pop_total::T,
-                              U::Matrix{T}, V::Matrix{T},
-                              u::Int, k::Int) where {T}
-    if strategy == UNIFORM
-        # Standard uniform rejection sampling
-        j = rand(rng, 1:n_items)
-        while j in items_u_set
-            j = rand(rng, 1:n_items)
-        end
-        return j
-    elseif strategy == POPULAR
-        # Popularity-biased: sample proportional to sqrt(item frequency)
-        j = _sample_from_cumsum(rng, pop_cumsum, pop_total, n_items)
-        while j in items_u_set
-            j = _sample_from_cumsum(rng, pop_cumsum, pop_total, n_items)
-        end
-        return j
-    else  # DYNAMIC — Dynamic Negative Sampling
-        best_j = 0
-        best_score = T(-Inf)
-        candidates_found = 0
-        max_tries = dns_k * 5  # avoid infinite loop
-        tries = 0
-        while candidates_found < dns_k && tries < max_tries
-            tries += 1
-            j = rand(rng, 1:n_items)
-            j in items_u_set && continue
-            candidates_found += 1
-            # Compute score for this candidate
-            score = zero(T)
-            @inbounds @simd for f in 1:k
-                score += U[f, u] * V[f, j]
-            end
-            if score > best_score
-                best_score = score
-                best_j = j
-            end
-        end
-        # Fallback if no candidates found
-        if best_j == 0
-            best_j = rand(rng, 1:n_items)
-            while best_j in items_u_set
-                best_j = rand(rng, 1:n_items)
-            end
-        end
-        return best_j
+function _bpr_sample_negative_impl(rng, n_items, sorted_items, ::Uniform, dns_k,
+                                   pop_cumsum, pop_total, U, V, u, k)
+    j = rand(rng, Int32(1):Int32(n_items))
+    while _insorted(sorted_items, j)
+        j = rand(rng, Int32(1):Int32(n_items))
     end
+    return Int(j)
+end
+
+function _bpr_sample_negative_impl(rng, n_items, sorted_items, ::Popular, dns_k,
+                                   pop_cumsum::Vector{T}, pop_total::T, U, V, u, k) where {T}
+    j = Int32(_sample_from_cumsum(rng, pop_cumsum, pop_total, n_items))
+    while _insorted(sorted_items, j)
+        j = Int32(_sample_from_cumsum(rng, pop_cumsum, pop_total, n_items))
+    end
+    return Int(j)
+end
+
+function _bpr_sample_negative_impl(rng, n_items, sorted_items, ::Dynamic, dns_k,
+                                   pop_cumsum::Vector{T}, pop_total::T,
+                                   U::Matrix{T}, V::Matrix{T}, u, k) where {T}
+    best_j = Int32(0)
+    best_score = T(-Inf)
+    candidates_found = 0
+    max_tries = dns_k * 5
+    tries = 0
+    while candidates_found < dns_k && tries < max_tries
+        tries += 1
+        j = rand(rng, Int32(1):Int32(n_items))
+        _insorted(sorted_items, j) && continue
+        candidates_found += 1
+        score = zero(T)
+        @inbounds @simd for f in 1:k
+            score += U[f, u] * V[f, Int(j)]
+        end
+        if score > best_score
+            best_score = score
+            best_j = j
+        end
+    end
+    if best_j == Int32(0)
+        best_j = rand(rng, Int32(1):Int32(n_items))
+        while _insorted(sorted_items, best_j)
+            best_j = rand(rng, Int32(1):Int32(n_items))
+        end
+    end
+    return Int(best_j)
 end
 
 """

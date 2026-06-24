@@ -41,19 +41,39 @@ These implement `predict` (regression output), not `recommend`.
 abstract type AbstractSparseRegression <: AbstractSparseModel end
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Solver enum
+# Solver types
 # ──────────────────────────────────────────────────────────────────────────────
 
 """
     ALSSolver
 
-Enum for ALS solver type: `CHOLESKY`, `CONJUGATE_GRADIENT`, or `NNLS`.
+Abstract type for ALS solver strategies. Concrete subtypes:
+- [`CholeskySolver`](@ref) — direct Cholesky factorization (most stable)
+- [`ConjugateGradient`](@ref) — iterative CG solver (fastest at scale)
+- [`NonNegative`](@ref) — non-negative least squares
 """
-@enum ALSSolver begin
-    CHOLESKY
-    CONJUGATE_GRADIENT
-    NNLS
-end
+abstract type ALSSolver end
+
+"""
+    CholeskySolver <: ALSSolver
+
+Direct Cholesky factorization solver. Maximum numerical stability.
+"""
+struct CholeskySolver <: ALSSolver end
+
+"""
+    ConjugateGradient <: ALSSolver
+
+Iterative Conjugate Gradient solver. Fastest for large-scale problems.
+"""
+struct ConjugateGradient <: ALSSolver end
+
+"""
+    NonNegative <: ALSSolver
+
+Non-Negative Least Squares solver. Produces non-negative factor matrices.
+"""
+struct NonNegative <: ALSSolver end
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Feedback enum
@@ -70,34 +90,74 @@ Enum for feedback type: `IMPLICIT` or `EXPLICIT`.
 end
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Family enum (for GLM link functions)
+# Family types (GLM link functions)
 # ──────────────────────────────────────────────────────────────────────────────
 
 """
     Family
 
-Enum for GLM family: `BINOMIAL` (logistic), `GAUSSIAN` (identity), or `POISSON` (log).
+Abstract type for GLM family (link function). Concrete subtypes:
+- [`Binomial`](@ref) — logistic (sigmoid) link
+- [`Gaussian`](@ref) — identity link
+- [`Poisson`](@ref) — exponential link
 """
-@enum Family begin
-    BINOMIAL
-    GAUSSIAN
-    POISSON
-end
+abstract type Family end
+
+"""
+    Binomial <: Family
+
+Logistic link function: sigmoid(x). For binary classification.
+"""
+struct Binomial <: Family end
+
+"""
+    Gaussian <: Family
+
+Identity link function: x. For regression.
+"""
+struct Gaussian <: Family end
+
+"""
+    Poisson <: Family
+
+Exponential link function: exp(x). For count data.
+"""
+struct Poisson <: Family end
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Negative sampling enum (for BayesianPersonalizedRanking)
+# Negative sampling types (for BayesianPersonalizedRanking)
 # ──────────────────────────────────────────────────────────────────────────────
 
 """
     NegativeSampling
 
-Enum for negative sampling strategy: `UNIFORM`, `POPULAR`, or `DYNAMIC`.
+Abstract type for negative sampling strategies. Concrete subtypes:
+- [`Uniform`](@ref) — uniform random sampling
+- [`Popular`](@ref) — popularity-biased sampling (proportional to √frequency)
+- [`Dynamic`](@ref) — Dynamic Negative Sampling (hardest negatives)
 """
-@enum NegativeSampling begin
-    UNIFORM
-    POPULAR
-    DYNAMIC
-end
+abstract type NegativeSampling end
+
+"""
+    Uniform <: NegativeSampling
+
+Uniform random negative sampling. Simple and fast.
+"""
+struct Uniform <: NegativeSampling end
+
+"""
+    Popular <: NegativeSampling
+
+Popularity-biased negative sampling. Samples proportional to √(item frequency).
+"""
+struct Popular <: NegativeSampling end
+
+"""
+    Dynamic <: NegativeSampling
+
+Dynamic Negative Sampling (DNS). Selects the hardest negative from a candidate pool.
+"""
+struct Dynamic <: NegativeSampling end
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Generic API — every model must implement these

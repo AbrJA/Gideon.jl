@@ -65,7 +65,7 @@ end
     rng = MersenneTwister(42)
     X = sprand(rng, 50, 40, 0.1)
     model = BayesianPersonalizedRanking(rank=5, learning_rate=0.05, max_iter=10,
-                negative_sampling=POPULAR, verbose=false)
+                negative_sampling=Popular(), verbose=false)
     fit!(model, X; rng=rng)
     @test model.is_fitted
     @test model.loss_history[end] < model.loss_history[1]
@@ -75,7 +75,7 @@ end
     rng = MersenneTwister(42)
     X = sprand(rng, 50, 40, 0.1)
     model = BayesianPersonalizedRanking(rank=5, learning_rate=0.01, max_iter=10,
-                negative_sampling=DYNAMIC, dns_candidates=10, verbose=false)
+                negative_sampling=Dynamic(), dns_candidates=10, verbose=false)
     fit!(model, X; rng=rng)
     @test model.is_fitted
     @test all(isfinite, model.user_factors)

@@ -65,7 +65,7 @@ end
 @testset "CG solver" begin
     rng = MersenneTwister(42)
     X = sprand(rng, 50, 40, 0.1)
-    model = ImplicitALS(rank=16, λ=0.01, α=10.0, max_iter=5, solver=CONJUGATE_GRADIENT, cg_steps=5, verbose=false)
+    model = ImplicitALS(rank=16, λ=0.01, α=10.0, max_iter=5, solver=ConjugateGradient(), cg_steps=5, verbose=false)
     fit!(model, X; rng=rng)
     @test model.is_fitted
     @test all(isfinite, model.user_factors)

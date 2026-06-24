@@ -146,7 +146,7 @@ function benchmark_bpr(X_train, X_test; rank=64, n_iter=50, lr=0.05, λ=0.01)
     return (train_time=t_train, predict_time=t_pred, ndcg=ndcg, recall=rec)
 end
 
-function benchmark_ials(X_train, X_test; rank=64, n_iter=15, α=40.0, λ=0.1, solver=CONJUGATE_GRADIENT)
+function benchmark_ials(X_train, X_test; rank=64, n_iter=15, α=40.0, λ=0.1, solver=ConjugateGradient())
     println("─" ^ 70)
     println("iALS — rank=$rank, iters=$n_iter, α=$α, solver=$solver")
     println("─" ^ 70)
@@ -191,7 +191,7 @@ for rank in [32, 64]
 end
 
 for rank in [32, 64]
-    results["iALS_CG_r$rank"] = benchmark_ials(X_train, X_test; rank=rank, solver=CONJUGATE_GRADIENT)
+    results["iALS_CG_r$rank"] = benchmark_ials(X_train, X_test; rank=rank, solver=ConjugateGradient())
 end
 
 # Summary table

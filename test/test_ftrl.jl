@@ -11,7 +11,7 @@ logloss(pred, label) = -sum(
     (1 .- label) .* log.(1 .- pred .+ 1e-10)) / length(label)
 
 @testset "Basic fit and predict (binomial)" begin
-    model = OnlineRegressor(learning_rate=0.1, λ=0.01, l1_ratio=0.5, family=BINOMIAL, max_iter=5, verbose=false)
+    model = OnlineRegressor(learning_rate=0.1, λ=0.01, l1_ratio=0.5, family=Binomial(), max_iter=5, verbose=false)
     fit!(model, X, y)
     @test model.is_initialized
     @test model.n_features == p
@@ -49,7 +49,7 @@ end
 
 @testset "Gaussian family" begin
     y_cont = randn(MersenneTwister(1), n)
-    model = OnlineRegressor(learning_rate=0.01, λ=0.001, family=GAUSSIAN, max_iter=3, verbose=false)
+    model = OnlineRegressor(learning_rate=0.01, λ=0.001, family=Gaussian(), max_iter=3, verbose=false)
     fit!(model, X, y_cont)
     preds = predict(model, X)
     @test length(preds) == n
@@ -60,7 +60,7 @@ end
 
 @testset "Poisson family" begin
     y_count = Float64.(rand(MersenneTwister(1), 0:5, n))
-    model = OnlineRegressor(learning_rate=0.01, λ=0.001, family=POISSON, max_iter=3, verbose=false)
+    model = OnlineRegressor(learning_rate=0.01, λ=0.001, family=Poisson(), max_iter=3, verbose=false)
     fit!(model, X, y_count)
     preds = predict(model, X)
     @test length(preds) == n

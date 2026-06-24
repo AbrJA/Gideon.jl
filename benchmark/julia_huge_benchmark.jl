@@ -71,7 +71,7 @@ println()
 
 print("Warming up JIT... ")
 let X_w = make_sparse_matrix(300, 200, 0.1; seed=1)
-    for s in (CHOLESKY, CONJUGATE_GRADIENT)
+    for s in (CHOLESKY, ConjugateGradient())
         fit!(WeightedMatrixFactorization(rank=10, λ=0.1, α=1.0, max_iter=3, solver=s, feedback=IMPLICIT),
              X_w; rng=MersenneTwister(1))
     end
@@ -91,7 +91,7 @@ catch
 end
 t_xl_chol = bench_wrmf(X_xl, CHOLESKY;           n_runs=3)
 t_xl_cg   = bench_wrmf(X_xl, CONJUGATE_GRADIENT; n_runs=3)
-println(@sprintf("  Cholesky: %.3f s   CG: %.3f s\n", t_xl_chol, t_xl_cg))
+println(@sprintf("  CholeskySolver: %.3f s   CG: %.3f s\n", t_xl_chol, t_xl_cg))
 
 # Scale 2 — XXLarge: 50K × 10K, density=0.5%
 println("─── XXLarge (50K × 10K, density=0.5%) ───")
@@ -106,7 +106,7 @@ catch
 end
 t_xxl_chol = bench_wrmf(X_xxl, CHOLESKY;           n_runs=2)
 t_xxl_cg   = bench_wrmf(X_xxl, CONJUGATE_GRADIENT; n_runs=2)
-println(@sprintf("  Cholesky: %.3f s   CG: %.3f s\n", t_xxl_chol, t_xxl_cg))
+println(@sprintf("  CholeskySolver: %.3f s   CG: %.3f s\n", t_xxl_chol, t_xxl_cg))
 
 # Scale 3 — Large3: 200K × 20K, density=0.1%
 println("─── Large3 (200K × 20K, density=0.1%) ───")
@@ -114,7 +114,7 @@ X_l3 = make_sparse_matrix(200_000, 20_000, 0.001)
 println("  Generated       nnz=$(fmt_nnz(nnz(X_l3)))  size=$(size(X_l3))")
 t_l3_chol = bench_wrmf(X_l3, CHOLESKY;           n_runs=1)
 t_l3_cg   = bench_wrmf(X_l3, CONJUGATE_GRADIENT; n_runs=1)
-println(@sprintf("  Cholesky: %.3f s   CG: %.3f s\n", t_l3_chol, t_l3_cg))
+println(@sprintf("  CholeskySolver: %.3f s   CG: %.3f s\n", t_l3_chol, t_l3_cg))
 
 # Scale 4 — Huge: 500K × 50K, density=0.05%
 println("─── Huge (500K × 50K, density=0.05%) ───")
@@ -122,7 +122,7 @@ X_h = make_sparse_matrix(500_000, 50_000, 0.0005)
 println("  Generated       nnz=$(fmt_nnz(nnz(X_h)))  size=$(size(X_h))")
 t_h_chol = bench_wrmf(X_h, CHOLESKY;           n_runs=1)
 t_h_cg   = bench_wrmf(X_h, CONJUGATE_GRADIENT; n_runs=1)
-println(@sprintf("  Cholesky: %.3f s   CG: %.3f s\n", t_h_chol, t_h_cg))
+println(@sprintf("  CholeskySolver: %.3f s   CG: %.3f s\n", t_h_chol, t_h_cg))
 
 # Scale 5 — MEGA: 1M × 100K, density=0.01%
 println("─── MEGA (1M × 100K, density=0.01%) ───")
@@ -130,7 +130,7 @@ X_mega = make_sparse_matrix(1_000_000, 100_000, 0.0001)
 println("  Generated       nnz=$(fmt_nnz(nnz(X_mega)))  size=$(size(X_mega))")
 t_mega_chol = bench_wrmf(X_mega, CHOLESKY;           n_runs=1)
 t_mega_cg   = bench_wrmf(X_mega, CONJUGATE_GRADIENT; n_runs=1)
-println(@sprintf("  Cholesky: %.3f s   CG: %.3f s\n", t_mega_chol, t_mega_cg))
+println(@sprintf("  CholeskySolver: %.3f s   CG: %.3f s\n", t_mega_chol, t_mega_cg))
 
 # ── Summary table ──────────────────────────────────────────────────────────────
 labels     = ["XLarge  (10K×5K)",   "XXLarge (50K×10K)",

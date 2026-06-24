@@ -16,8 +16,8 @@ rng = MersenneTwister(42)
 X = sprand(rng, 100, 80, 0.05)
 λ = 0.1; α = 1.0
 
-@testset "Implicit Cholesky" begin
-    model = WeightedMatrixFactorization(rank=5, λ=λ, α=α, max_iter=5, solver=CHOLESKY, feedback=IMPLICIT, verbose=false)
+@testset "Implicit CholeskySolver" begin
+    model = WeightedMatrixFactorization(rank=5, λ=λ, α=α, max_iter=5, solver=CholeskySolver(), feedback=IMPLICIT, verbose=false)
     fit!(model, X; rng=MersenneTwister(1))
     @test model.is_fitted
     @test size(model.user_factors) == (5, 100)
@@ -27,7 +27,7 @@ X = sprand(rng, 100, 80, 0.05)
 end
 
 @testset "Implicit CG" begin
-    model = WeightedMatrixFactorization(rank=5, λ=λ, α=α, max_iter=5, solver=CONJUGATE_GRADIENT, feedback=IMPLICIT, verbose=false)
+    model = WeightedMatrixFactorization(rank=5, λ=λ, α=α, max_iter=5, solver=ConjugateGradient(), feedback=IMPLICIT, verbose=false)
     fit!(model, X; rng=MersenneTwister(1))
     @test model.is_fitted
     @test size(model.user_factors) == (5, 100)
@@ -35,13 +35,13 @@ end
 end
 
 @testset "Explicit" begin
-    model = WeightedMatrixFactorization(rank=5, λ=λ, α=α, max_iter=5, solver=CHOLESKY, feedback=EXPLICIT, verbose=false)
+    model = WeightedMatrixFactorization(rank=5, λ=λ, α=α, max_iter=5, solver=CholeskySolver(), feedback=EXPLICIT, verbose=false)
     fit!(model, X; rng=MersenneTwister(1))
     @test model.is_fitted
 end
 
-@testset "NNLS" begin
-    model = WeightedMatrixFactorization(rank=5, λ=λ, α=α, max_iter=3, solver=NNLS, feedback=IMPLICIT, verbose=false)
+@testset "NonNegative" begin
+    model = WeightedMatrixFactorization(rank=5, λ=λ, α=α, max_iter=3, solver=NonNegative(), feedback=IMPLICIT, verbose=false)
     fit!(model, X; rng=MersenneTwister(1))
     @test model.is_fitted
     @test all(model.user_factors .>= -1e-12)
@@ -58,7 +58,7 @@ end
 end
 
 @testset "transform new users" begin
-    model = WeightedMatrixFactorization(rank=4, λ=λ, α=α, max_iter=10, solver=CHOLESKY, verbose=false)
+    model = WeightedMatrixFactorization(rank=4, λ=λ, α=α, max_iter=10, solver=CholeskySolver(), verbose=false)
     fit!(model, X; rng=MersenneTwister(1))
     X_new = sprand(MersenneTwister(3), 7, size(X, 2), 0.15)
     U_new = transform(model, X_new)
@@ -74,10 +74,10 @@ end
     @test model.is_fitted
 end
 
-@testset "Loss monotonically decreasing (Cholesky)" begin
+@testset "Loss monotonically decreasing (CholeskySolver)" begin
     losses = Float64[]
     for n_iter in [2, 5, 15, 30]
-        m = WeightedMatrixFactorization(rank=4, λ=λ, α=α, max_iter=n_iter, solver=CHOLESKY,
+        m = WeightedMatrixFactorization(rank=4, λ=λ, α=α, max_iter=n_iter, solver=CholeskySolver(),
                  feedback=IMPLICIT, convergence_tol=-1.0, verbose=false)
         fit!(m, X; rng=MersenneTwister(1))
         push!(losses, _wrmf_loss(m.user_factors, m.item_factors, X, λ, α))
@@ -88,9 +88,9 @@ end
 end
 
 @testset "CG loss decreases with more iterations" begin
-    m_early = WeightedMatrixFactorization(rank=4, λ=λ, α=α, max_iter=2, solver=CONJUGATE_GRADIENT,
+    m_early = WeightedMatrixFactorization(rank=4, λ=λ, α=α, max_iter=2, solver=ConjugateGradient(),
                    cg_steps=20, convergence_tol=-1.0, verbose=false)
-    m_conv = WeightedMatrixFactorization(rank=4, λ=λ, α=α, max_iter=30, solver=CONJUGATE_GRADIENT,
+    m_conv = WeightedMatrixFactorization(rank=4, λ=λ, α=α, max_iter=30, solver=ConjugateGradient(),
                   cg_steps=20, convergence_tol=-1.0, verbose=false)
     fit!(m_early, X; rng=MersenneTwister(1))
     fit!(m_conv, X; rng=MersenneTwister(1))
@@ -99,10 +99,10 @@ end
     @test l_conv < l_early
 end
 
-@testset "Cholesky ≈ CG at convergence" begin
-    m_chol = WeightedMatrixFactorization(rank=4, λ=λ, α=α, max_iter=100, solver=CHOLESKY,
+@testset "CholeskySolver ≈ CG at convergence" begin
+    m_chol = WeightedMatrixFactorization(rank=4, λ=λ, α=α, max_iter=100, solver=CholeskySolver(),
                   convergence_tol=1e-7, verbose=false)
-    m_cg = WeightedMatrixFactorization(rank=4, λ=λ, α=α, max_iter=100, solver=CONJUGATE_GRADIENT,
+    m_cg = WeightedMatrixFactorization(rank=4, λ=λ, α=α, max_iter=100, solver=ConjugateGradient(),
                 cg_steps=50, convergence_tol=1e-7, verbose=false)
     fit!(m_chol, X; rng=MersenneTwister(7))
     fit!(m_cg, X; rng=MersenneTwister(7))
@@ -112,13 +112,13 @@ end
     @test rel < 0.05
 end
 
-@testset "NNLS warm-start" begin
-    m_chol = WeightedMatrixFactorization(rank=4, λ=λ, α=α, max_iter=20, solver=CHOLESKY, verbose=false)
+@testset "NonNegative warm-start" begin
+    m_chol = WeightedMatrixFactorization(rank=4, λ=λ, α=α, max_iter=20, solver=CholeskySolver(), verbose=false)
     fit!(m_chol, X; rng=MersenneTwister(1))
     U_warm = abs.(m_chol.user_factors)
     V_warm = abs.(m_chol.item_factors)
 
-    m_nnls = WeightedMatrixFactorization(rank=4, λ=λ, α=α, max_iter=20, solver=NNLS, verbose=false)
+    m_nnls = WeightedMatrixFactorization(rank=4, λ=λ, α=α, max_iter=20, solver=NonNegative(), verbose=false)
     fit!(m_nnls, X; rng=MersenneTwister(1), U_init=U_warm, V_init=V_warm)
     @test all(m_nnls.user_factors .>= -1e-12)
     @test all(m_nnls.item_factors .>= -1e-12)
@@ -133,7 +133,7 @@ end
     V = vcat(10.0*ones(25), ones(30))
     X2 = sparse(I, J, V, 30, 40)
 
-    m2 = WeightedMatrixFactorization(rank=5, λ=0.01, α=10.0, max_iter=50, solver=CHOLESKY, verbose=false)
+    m2 = WeightedMatrixFactorization(rank=5, λ=0.01, α=10.0, max_iter=50, solver=CholeskySolver(), verbose=false)
     fit!(m2, X2; rng=MersenneTwister(42))
     preds = recommend(m2, X2; k=5)
     @test size(preds) == (30, 5)
@@ -147,7 +147,7 @@ end
 @testset "Explicit feedback: MSE < 1" begin
     rng3 = MersenneTwister(5)
     X_ex = sprand(rng3, 40, 30, 0.2)
-    m_ex = WeightedMatrixFactorization(rank=4, λ=0.1, α=1.0, max_iter=20, solver=CHOLESKY,
+    m_ex = WeightedMatrixFactorization(rank=4, λ=0.1, α=1.0, max_iter=20, solver=CholeskySolver(),
                 feedback=EXPLICIT, verbose=false)
     fit!(m_ex, X_ex; rng=rng3)
     rv = rowvals(X_ex); nz = nonzeros(X_ex); mse = 0.0

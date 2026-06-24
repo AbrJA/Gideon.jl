@@ -6,7 +6,7 @@
 
 [![Build Status](https://github.com/AbrJA/Gideon.jl/workflows/CI/badge.svg)](https://github.com/AbrJA/Gideon.jl/actions)
 [![codecov](https://codecov.io/gh/AbrJA/Gideon.jl/graph/badge.svg)](https://codecov.io/gh/AbrJA/Gideon.jl)
-[![Julia 1.9+](https://img.shields.io/badge/Julia-1.9%2B-blue?logo=julia)](https://julialang.org)
+[![Julia 1.10+](https://img.shields.io/badge/Julia-1.10%2B-blue?logo=julia)](https://julialang.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 </div>

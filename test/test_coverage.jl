@@ -205,8 +205,8 @@ end
     rng = MersenneTwister(42)
     X = sprand(rng, 100, 60, 0.05)
 
-    @testset "WeightedMatrixFactorization Cholesky transform" begin
-        model = WeightedMatrixFactorization(rank=8, max_iter=5, solver=CHOLESKY, verbose=false)
+    @testset "WeightedMatrixFactorization CholeskySolver transform" begin
+        model = WeightedMatrixFactorization(rank=8, max_iter=5, solver=CholeskySolver(), verbose=false)
         fit!(model, X; rng=MersenneTwister(1))
         X_new = sprand(MersenneTwister(7), 5, 60, 0.1)
         U_new = transform(model, X_new)
@@ -215,7 +215,7 @@ end
     end
 
     @testset "WeightedMatrixFactorization CG transform" begin
-        model = WeightedMatrixFactorization(rank=8, max_iter=5, solver=CONJUGATE_GRADIENT, verbose=false)
+        model = WeightedMatrixFactorization(rank=8, max_iter=5, solver=ConjugateGradient(), verbose=false)
         fit!(model, X; rng=MersenneTwister(1))
         X_new = sprand(MersenneTwister(7), 3, 60, 0.1)
         U_new = transform(model, X_new)
@@ -371,7 +371,7 @@ if _HAS_CUDA
         rng = MersenneTwister(42)
         X = sprand(rng, 80, 60, 0.05)
 
-        model = WeightedMatrixFactorization(rank=8, max_iter=5, solver=CHOLESKY, verbose=false)
+        model = WeightedMatrixFactorization(rank=8, max_iter=5, solver=CholeskySolver(), verbose=false)
         fit_gpu!(model, X; rng=MersenneTwister(1))
 
         @test model.is_fitted

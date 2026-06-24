@@ -75,17 +75,17 @@ if isdir(FIXTURE_DIR) && isfile(joinpath(FIXTURE_DIR, "wrmf_chol_loss.txt"))
                               joinpath(FIXTURE_DIR, "X_small_dims.csv"))
         RANK = 5; λ_r = 0.1; α_r = 1.0
 
-        @testset "WeightedMatrixFactorization Cholesky: loss ≤ R × 1.10" begin
+        @testset "WeightedMatrixFactorization CholeskySolver: loss ≤ R × 1.10" begin
             r_loss = _read_scalar(joinpath(FIXTURE_DIR, "wrmf_chol_loss.txt"))
             m = WeightedMatrixFactorization(rank=RANK, λ=λ_r, α=α_r, max_iter=50,
-                     solver=CHOLESKY, feedback=IMPLICIT, convergence_tol=1e-6, verbose=false)
+                     solver=CholeskySolver(), feedback=IMPLICIT, convergence_tol=1e-6, verbose=false)
             fit!(m, X_ref; rng=MersenneTwister(42))
             jl_loss = _wrmf_loss_ref(m.user_factors, m.item_factors, X_ref, λ_r, α_r)
             @test isfinite(jl_loss)
             @test jl_loss <= r_loss * 1.10
         end
 
-        @testset "WeightedMatrixFactorization Cholesky: warm-start does not increase loss" begin
+        @testset "WeightedMatrixFactorization CholeskySolver: warm-start does not increase loss" begin
             U_raw = _read_matrix(joinpath(FIXTURE_DIR, "wrmf_chol_user.csv"))
             V_raw = _read_matrix(joinpath(FIXTURE_DIR, "wrmf_chol_item.csv"))
             U_r = Matrix{Float64}(U_raw')
@@ -93,7 +93,7 @@ if isdir(FIXTURE_DIR) && isfile(joinpath(FIXTURE_DIR, "wrmf_chol_loss.txt"))
             r_loss = _read_scalar(joinpath(FIXTURE_DIR, "wrmf_chol_loss.txt"))
 
             m_ws = WeightedMatrixFactorization(rank=RANK, λ=λ_r, α=α_r, max_iter=1,
-                        solver=CHOLESKY, feedback=IMPLICIT, convergence_tol=-1.0, verbose=false)
+                        solver=CholeskySolver(), feedback=IMPLICIT, convergence_tol=-1.0, verbose=false)
             fit!(m_ws, X_ref; rng=MersenneTwister(1), U_init=U_r, V_init=V_r)
             jl_loss_ws = _wrmf_loss_ref(m_ws.user_factors, m_ws.item_factors, X_ref, λ_r, α_r)
             @test jl_loss_ws <= r_loss * 1.10
@@ -102,7 +102,7 @@ if isdir(FIXTURE_DIR) && isfile(joinpath(FIXTURE_DIR, "wrmf_chol_loss.txt"))
         @testset "WeightedMatrixFactorization CG: loss ≤ R × 1.10" begin
             r_loss_cg = _read_scalar(joinpath(FIXTURE_DIR, "wrmf_cg_loss.txt"))
             m_cg = WeightedMatrixFactorization(rank=RANK, λ=λ_r, α=α_r, max_iter=50,
-                        solver=CONJUGATE_GRADIENT, cg_steps=10,
+                        solver=ConjugateGradient(), cg_steps=10,
                         convergence_tol=1e-6, verbose=false)
             fit!(m_cg, X_ref; rng=MersenneTwister(42))
             jl_loss_cg = _wrmf_loss_ref(m_cg.user_factors, m_cg.item_factors, X_ref, λ_r, α_r)
@@ -139,7 +139,7 @@ if isdir(FIXTURE_DIR) && isfile(joinpath(FIXTURE_DIR, "wrmf_chol_loss.txt"))
             for seed in 1:5
                 m = FactorizationMachine(
                     learning_rate_w=10.0, rank=2, max_iter=200,
-                    λ_w=0.0, λ_v=0.0, family=BINOMIAL, intercept=true, verbose=false)
+                    λ_w=0.0, λ_v=0.0, family=Binomial(), intercept=true, verbose=false)
                 fit!(m, x_xor, y_xor; rng=MersenneTwister(seed))
                 p = predict(m, x_xor)
                 j_correct = p[1] < 0.3 && p[4] < 0.3 && p[2] > 0.7 && p[3] > 0.7

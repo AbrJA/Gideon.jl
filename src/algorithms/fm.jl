@@ -14,13 +14,13 @@
 
 Second-order Factorization Machine trained via SGD with AdaGrad.
 
-Supports both classification (`BINOMIAL`) and regression (`GAUSSIAN`) via
+Supports both classification (`Binomial()`) and regression (`Gaussian()`) via
 the `family` parameter. Uses per-coordinate adaptive learning rates (AdaGrad).
 
 # Constructor
 ```julia
 FactorizationMachine(; rank=4, learning_rate_w=0.2, learning_rate_v=learning_rate_w,
-                       λ_w=0.0, λ_v=0.0, family=BINOMIAL, intercept=true,
+                       λ_w=0.0, λ_v=0.0, family=Binomial(), intercept=true,
                        max_iter=10, convergence_tol=-1.0, verbose=true)
 ```
 
@@ -30,7 +30,7 @@ using SparseArrays, Gideon
 
 X = sprand(10000, 1000, 0.01)
 y = rand([0.0, 1.0], 10000)
-model = FactorizationMachine(rank=8, family=BINOMIAL)
+model = FactorizationMachine(rank=8, family=Binomial())
 fit!(model, X, y)
 preds = predict(model, X)
 ```
@@ -61,14 +61,14 @@ function FactorizationMachine(;
     learning_rate_v::Float64 = learning_rate_w,
     λ_w::Float64 = 0.0,
     λ_v::Float64 = 0.0,
-    family::Family = BINOMIAL,
+    family::Family = Binomial(),
     intercept::Bool = true,
     max_iter::Int = 10,
     convergence_tol::Float64 = -1.0,
     verbose::Bool = true,
 )
     rank >= 1 || throw(ArgumentError("rank must be ≥ 1, got $rank"))
-    family in (BINOMIAL, GAUSSIAN) || throw(ArgumentError("FM supports BINOMIAL or GAUSSIAN, got $family"))
+    family isa Union{Binomial, Gaussian} || throw(ArgumentError("FM supports Binomial() or Gaussian() families"))
     FactorizationMachine{Float64}(
         rank, learning_rate_w, learning_rate_v, λ_w, λ_v, family, intercept,
         max_iter, convergence_tol, verbose,
@@ -144,10 +144,10 @@ function update!(model::FactorizationMachine{T}, X::SparseMatrixCSC{Tv,Ti},
         pred += interaction / 2
 
         # ---- Compute gradient multiplier ----
-        if model.family == BINOMIAL
+        if model.family isa Binomial
             y_s = T(y[s]) > zero(T) ? one(T) : -one(T)
             grad_mult = -y_s * sigmoid(-y_s * pred) * weights[s]
-        else  # GAUSSIAN
+        else  # Gaussian
             grad_mult = (pred - T(y[s])) * weights[s]
         end
 
@@ -202,7 +202,7 @@ function fit!(model::FactorizationMachine{T}, X::SparseMatrixCSC, y::AbstractVec
         # Compute training loss for convergence check
         if model.convergence_tol > zero(T)
             preds = predict(model, X)
-            loss = if model.family == BINOMIAL
+            loss = if model.family isa Binomial
                 -sum(y .* log.(preds .+ T(1e-10)) .+ (one(T) .- y) .* log.(one(T) .- preds .+ T(1e-10))) / length(y)
             else
                 sum((preds .- y).^2) / length(y)
@@ -231,8 +231,8 @@ end
     predict(model::FactorizationMachine, X) -> Vector
 
 Generate predictions. Output depends on family:
-- `BINOMIAL` → probabilities in [0,1]
-- `GAUSSIAN` → real-valued predictions
+- `Binomial()` → probabilities in [0,1]
+- `Gaussian()` → real-valued predictions
 """
 function predict(model::FactorizationMachine{T}, X::SparseMatrixCSC) where {T}
     model.is_initialized || error("Model not fitted")
@@ -269,7 +269,7 @@ function predict(model::FactorizationMachine{T}, X::SparseMatrixCSC) where {T}
         end
         pred += interaction / 2
 
-        if model.family == BINOMIAL
+        if model.family isa Binomial
             preds[s] = sigmoid(pred)
         else
             preds[s] = pred

@@ -33,10 +33,10 @@ end
 end
 
 @testset "link_function" begin
-    @test Gideon.link_function(BINOMIAL, 0.0) ≈ 0.5
-    @test Gideon.link_function(GAUSSIAN, 1.5) ≈ 1.5
-    @test Gideon.link_function(POISSON, 0.0) ≈ 1.0
-    @test Gideon.link_function(POISSON, 1.0) ≈ exp(1.0)
+    @test Gideon.link_function(Binomial(), 0.0) ≈ 0.5
+    @test Gideon.link_function(Gaussian(), 1.5) ≈ 1.5
+    @test Gideon.link_function(Poisson(), 0.0) ≈ 1.0
+    @test Gideon.link_function(Poisson(), 1.0) ≈ exp(1.0)
 end
 
 @testset "init_factors" begin

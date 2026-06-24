@@ -15,7 +15,7 @@
 #   • BLAS.syr! for O(k²) rank-1 gram accumulation (vectorised BLAS-2)
 #   • BLAS.axpy! for O(k) rhs accumulation
 #   • In-place LAPACK.potrf! + LAPACK.potrs! → no extra matrices in Chol path
-#   • Coordinate-descent NNLS (true bounded NNLS, not a clamp)
+#   • Coordinate-descent NonNegative (true bounded NonNegative, not a clamp)
 #   • BLAS.syrk! for YᵀY (symmetric rank-k update)
 #   • Base.Threads.@threads :static for stable thread IDs
 # ──────────────────────────────────────────────────────────────────────────────
@@ -26,13 +26,13 @@
 Weighted Regularized Matrix Factorization via Alternating Least Squares.
 
 Supports implicit feedback (Hu et al. 2008) and explicit feedback (MSE).
-Three solvers available: Cholesky (exact), Conjugate Gradient (approximate, fast),
-and NNLS (non-negative matrix factorization).
+Three solvers available: CholeskySolver (exact), Conjugate Gradient (approximate, fast),
+and NonNegative (non-negative matrix factorization).
 
 # Constructor
 ```julia
 WeightedMatrixFactorization(; rank=10, λ=0.1, α=1.0, max_iter=10, convergence_tol=0.005,
-       solver=CONJUGATE_GRADIENT, cg_steps=3, feedback=IMPLICIT, verbose=true)
+       solver=ConjugateGradient(), cg_steps=3, feedback=IMPLICIT, verbose=true)
 ```
 
 # Fields
@@ -41,7 +41,7 @@ WeightedMatrixFactorization(; rank=10, λ=0.1, α=1.0, max_iter=10, convergence_
 - `α::T`              — confidence weight for implicit feedback
 - `max_iter::Int`      — maximum ALS iterations
 - `convergence_tol::T` — relative loss tolerance for early stopping (<0 disables)
-- `solver::ALSSolver`  — `CHOLESKY`, `CONJUGATE_GRADIENT`, or `NNLS`
+- `solver::ALSSolver`  — `CholeskySolver()`, `ConjugateGradient()`, or `NonNegative()`
 - `cg_steps::Int`      — max CG inner iterations (only for CG solver)
 - `feedback::FeedbackType` — `IMPLICIT` or `EXPLICIT`
 - `user_factors::Matrix{T}`  — rank × n_users (set after `fit!`)
@@ -52,7 +52,7 @@ WeightedMatrixFactorization(; rank=10, λ=0.1, α=1.0, max_iter=10, convergence_
 using SparseArrays, Gideon
 
 X = sprand(1000, 500, 0.01)
-model = WeightedMatrixFactorization(rank=64, λ=0.1, α=40.0, max_iter=15, solver=CONJUGATE_GRADIENT)
+model = WeightedMatrixFactorization(rank=64, λ=0.1, α=40.0, max_iter=15, solver=ConjugateGradient())
 fit!(model, X)
 recommendations = recommend(model, X; k=10)
 ```
@@ -78,7 +78,7 @@ function WeightedMatrixFactorization(;
     α::Float64 = 1.0,
     max_iter::Int = 10,
     convergence_tol::Float64 = 0.005,
-    solver::ALSSolver = CONJUGATE_GRADIENT,
+    solver::ALSSolver = ConjugateGradient(),
     cg_steps::Int = 3,
     feedback::FeedbackType = IMPLICIT,
     verbose::Bool = true,
@@ -171,14 +171,15 @@ function _als_sweep!(
     fixed::Matrix{T},
     n_entities::Int,
 ) where {T}
-    if model.solver == CHOLESKY || model.solver == NNLS
-        _als_sweep_cholesky!(model, A, factors, fixed, n_entities)
-    else
-        _als_sweep_cg!(model, A, factors, fixed, n_entities)
-    end
+    _als_sweep!(model.solver, model, A, factors, fixed, n_entities)
 end
 
-# ──────────────── Cholesky path ────────────────
+_als_sweep!(::ConjugateGradient, model, A, factors, fixed, n_entities) =
+    _als_sweep_cg!(model, A, factors, fixed, n_entities)
+_als_sweep!(::Union{CholeskySolver, NonNegative}, model, A, factors, fixed, n_entities) =
+    _als_sweep_cholesky!(model, A, factors, fixed, n_entities)
+
+# ──────────────── CholeskySolver path ────────────────
 
 function _als_sweep_cholesky!(
     model::WeightedMatrixFactorization{T},
@@ -191,7 +192,7 @@ function _als_sweep_cholesky!(
     λ = model.λ
     α = model.α
     is_implicit = model.feedback == IMPLICIT
-    is_nnls     = model.solver == NNLS
+    is_nnls     = model.solver isa NonNegative
 
     # YᵀY via BLAS syrk (symmetric rank-k: C = α·A·Aᵀ + β·C)
     YtY = Matrix{T}(undef, k, k)
@@ -251,7 +252,7 @@ end
 """
     _nnls_cd!(x, YtY, Y, rv, nz, col_range, k, α, λ, is_implicit; max_iter=50)
 
-Block-coordinate descent NNLS: minimises ‖Ax - b‖² s.t. x ≥ 0.
+Block-coordinate descent NonNegative: minimises ‖Ax - b‖² s.t. x ≥ 0.
 Updates `x` in-place.
 """
 function _nnls_cd!(

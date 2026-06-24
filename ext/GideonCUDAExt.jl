@@ -267,7 +267,7 @@ function _gpu_ials_update_buffered!(target::Matrix{T}, source::Matrix{T}, R,
             end
         end
 
-        # Solve via in-place Cholesky
+        # Solve via in-place CholeskySolver
         x = cholesky!(Symmetric(A)) \ b
         @inbounds for f in 1:k
             target[f, u] = x[f]
@@ -386,7 +386,7 @@ function _gpu_wrmf_sweep!(
     λ = model.λ
     α = model.α
     is_implicit = model.feedback == Gideon.IMPLICIT
-    is_nnls = model.solver == Gideon.NNLS
+    is_nnls = model.solver isa Gideon.NonNegative
 
     # ── Compute YᵀY on GPU via cuBLAS syrk ──
     fixed_gpu = CuMatrix{T}(fixed)

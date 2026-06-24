@@ -83,11 +83,11 @@ end
         X   = sprand(rng, 60, 50, 0.15)
         λ   = 0.1; α = 1.0
 
-        @testset "Cholesky: loss is monotonically non-increasing" begin
+        @testset "CholeskySolver: loss is monotonically non-increasing" begin
             losses = Float64[]
             for n_iter in [2, 5, 15, 30]
                 m = WeightedMatrixFactorization(rank=4, λ=λ, α=α, max_iter=n_iter,
-                         solver=CHOLESKY, feedback=IMPLICIT)
+                         solver=CholeskySolver(), feedback=IMPLICIT)
                 fit!(m, X; rng=MersenneTwister(1), convergence_tol=-1.0)
                 push!(losses, _wrmf_loss(m.user_factors, m.item_factors, X, λ, α))
             end
@@ -98,9 +98,9 @@ end
 
         @testset "CG: loss decreases with more iterations" begin
             m_early = WeightedMatrixFactorization(rank=4, λ=λ, α=α, max_iter=2,
-                           solver=CONJUGATE_GRADIENT, cg_steps=20, feedback=IMPLICIT)
+                           solver=ConjugateGradient(), cg_steps=20, feedback=IMPLICIT)
             m_conv  = WeightedMatrixFactorization(rank=4, λ=λ, α=α, max_iter=30,
-                           solver=CONJUGATE_GRADIENT, cg_steps=20, feedback=IMPLICIT)
+                           solver=ConjugateGradient(), cg_steps=20, feedback=IMPLICIT)
             fit!(m_early, X; rng=MersenneTwister(1), convergence_tol=-1.0)
             fit!(m_conv,  X; rng=MersenneTwister(1), convergence_tol=-1.0)
             l_early = _wrmf_loss(m_early.user_factors, m_early.item_factors, X, λ, α)
@@ -108,13 +108,13 @@ end
             @test l_conv < l_early
         end
 
-        @testset "Cholesky ≈ CG at convergence (same unique minimum)" begin
+        @testset "CholeskySolver ≈ CG at convergence (same unique minimum)" begin
             # Both solvers minimise the same strongly convex sub-problem per row →
             # they converge to the same (unique) global ALS fixed-point.
             m_chol = WeightedMatrixFactorization(rank=4, λ=λ, α=α, max_iter=100,
-                          solver=CHOLESKY, feedback=IMPLICIT)
+                          solver=CholeskySolver(), feedback=IMPLICIT)
             m_cg   = WeightedMatrixFactorization(rank=4, λ=λ, α=α, max_iter=100,
-                          solver=CONJUGATE_GRADIENT, cg_steps=50, feedback=IMPLICIT)
+                          solver=ConjugateGradient(), cg_steps=50, feedback=IMPLICIT)
             fit!(m_chol, X; rng=MersenneTwister(7), convergence_tol=1e-7)
             fit!(m_cg,   X; rng=MersenneTwister(7), convergence_tol=1e-7)
             l_chol = _wrmf_loss(m_chol.user_factors, m_chol.item_factors, X, λ, α)
@@ -123,21 +123,21 @@ end
             @test rel < 0.05   # within 5% of each other
         end
 
-        @testset "NNLS: all factor entries non-negative" begin
-            m = WeightedMatrixFactorization(rank=4, λ=λ, α=α, max_iter=10, solver=NNLS, feedback=IMPLICIT)
+        @testset "NonNegative: all factor entries non-negative" begin
+            m = WeightedMatrixFactorization(rank=4, λ=λ, α=α, max_iter=10, solver=NonNegative(), feedback=IMPLICIT)
             fit!(m, X; rng=MersenneTwister(1))
             @test all(m.user_factors .>= -1e-12)
             @test all(m.item_factors .>= -1e-12)
         end
 
-        @testset "NNLS warm-start via U_init / V_init" begin
-            # Initialise NNLS from abs of a converged Cholesky solution
-            m_chol = WeightedMatrixFactorization(rank=4, λ=λ, α=α, max_iter=20, solver=CHOLESKY)
+        @testset "NonNegative warm-start via U_init / V_init" begin
+            # Initialise NonNegative from abs of a converged CholeskySolver solution
+            m_chol = WeightedMatrixFactorization(rank=4, λ=λ, α=α, max_iter=20, solver=CholeskySolver())
             fit!(m_chol, X; rng=MersenneTwister(1))
             U_warm = abs.(m_chol.user_factors)
             V_warm = abs.(m_chol.item_factors)
 
-            m_nnls = WeightedMatrixFactorization(rank=4, λ=λ, α=α, max_iter=20, solver=NNLS)
+            m_nnls = WeightedMatrixFactorization(rank=4, λ=λ, α=α, max_iter=20, solver=NonNegative())
             fit!(m_nnls, X; rng=MersenneTwister(1),
                  U_init=U_warm, V_init=V_warm)
             @test all(m_nnls.user_factors .>= -1e-12)
@@ -145,7 +145,7 @@ end
             # Starting from a sensible point the warm-start should not diverge
             l_nnls = _wrmf_loss(m_nnls.user_factors, m_nnls.item_factors, X, λ, α)
             l_cold = _wrmf_loss(m_chol.user_factors, m_chol.item_factors, X, λ, α)
-            @test l_nnls < l_cold * 5.0    # NNLS (constrained) can't do better than unconstrained
+            @test l_nnls < l_cold * 5.0    # NonNegative (constrained) can't do better than unconstrained
         end
 
         @testset "predict: structured signal gives expected top-k" begin
@@ -156,7 +156,7 @@ end
             V = vcat(5.0*ones(50),            ones(30))
             X2 = sparse(I, J, V, 30, 40)
 
-            m2 = WeightedMatrixFactorization(rank=5, λ=0.01, α=10.0, max_iter=20, solver=CHOLESKY)
+            m2 = WeightedMatrixFactorization(rank=5, λ=0.01, α=10.0, max_iter=20, solver=CholeskySolver())
             fit!(m2, X2; rng=rng2)
 
             preds = predict(m2, X2; k=5)
@@ -167,7 +167,7 @@ end
         end
 
         @testset "transform: new users get valid factor matrix" begin
-            m = WeightedMatrixFactorization(rank=4, λ=λ, α=α, max_iter=10, solver=CHOLESKY)
+            m = WeightedMatrixFactorization(rank=4, λ=λ, α=α, max_iter=10, solver=CholeskySolver())
             fit!(m, X; rng=MersenneTwister(1))
             X_new  = sprand(MersenneTwister(3), 7, size(X, 2), 0.15)
             U_new  = transform(m, X_new)
@@ -180,7 +180,7 @@ end
             rng3 = MersenneTwister(5)
             X_ex = sprand(rng3, 40, 30, 0.2)
             m_ex = WeightedMatrixFactorization(rank=4, λ=0.1, α=1.0, max_iter=20,
-                        solver=CHOLESKY, feedback=EXPLICIT)
+                        solver=CholeskySolver(), feedback=EXPLICIT)
             fit!(m_ex, X_ex; rng=rng3)
             rv = rowvals(X_ex); nz = nonzeros(X_ex); mse = 0.0
             for j in axes(X_ex, 2), idx in nzrange(X_ex, j)
@@ -423,18 +423,18 @@ if isdir(FIXTURE_DIR) && isfile(joinpath(FIXTURE_DIR, "wrmf_chol_loss.txt"))
                               joinpath(FIXTURE_DIR, "X_small_dims.csv"))
         RANK  = 5; λ_r = 0.1; α_r = 1.0
 
-        # ── WeightedMatrixFactorization Cholesky vs R ─────────────────────────────────────────────────
-        @testset "WeightedMatrixFactorization Cholesky: converged loss ≤ R × 1.10" begin
+        # ── WeightedMatrixFactorization CholeskySolver vs R ─────────────────────────────────────────────────
+        @testset "WeightedMatrixFactorization CholeskySolver: converged loss ≤ R × 1.10" begin
             r_loss = _read_scalar(joinpath(FIXTURE_DIR, "wrmf_chol_loss.txt"))
             m = WeightedMatrixFactorization(rank=RANK, λ=λ_r, α=α_r, max_iter=50,
-                     solver=CHOLESKY, feedback=IMPLICIT)
+                     solver=CholeskySolver(), feedback=IMPLICIT)
             fit!(m, X_ref; rng=MersenneTwister(42), convergence_tol=1e-6)
             jl_loss = _wrmf_loss(m.user_factors, m.item_factors, X_ref, λ_r, α_r)
             @test isfinite(jl_loss)
             @test jl_loss <= r_loss * 1.10
         end
 
-        @testset "WeightedMatrixFactorization Cholesky: one iteration from R factors does not increase loss" begin
+        @testset "WeightedMatrixFactorization CholeskySolver: one iteration from R factors does not increase loss" begin
             # Load R's converged factors; one more ALS step should not worsen them.
             U_raw = _read_matrix(joinpath(FIXTURE_DIR, "wrmf_chol_user.csv"))  # n_u × rank
             V_raw = _read_matrix(joinpath(FIXTURE_DIR, "wrmf_chol_item.csv"))  # rank × n_i
@@ -447,7 +447,7 @@ if isdir(FIXTURE_DIR) && isfile(joinpath(FIXTURE_DIR, "wrmf_chol_loss.txt"))
             @test size(r_scores) == (100, 80)
 
             m_warmstart = WeightedMatrixFactorization(rank=RANK, λ=λ_r, α=α_r, max_iter=1,
-                               solver=CHOLESKY, feedback=IMPLICIT)
+                               solver=CholeskySolver(), feedback=IMPLICIT)
             fit!(m_warmstart, X_ref; rng=MersenneTwister(1),
                  U_init=U_r, V_init=V_r)
             jl_loss_ws = _wrmf_loss(m_warmstart.user_factors,
@@ -460,7 +460,7 @@ if isdir(FIXTURE_DIR) && isfile(joinpath(FIXTURE_DIR, "wrmf_chol_loss.txt"))
         @testset "WeightedMatrixFactorization CG: converged loss ≤ R × 1.10" begin
             r_loss_cg = _read_scalar(joinpath(FIXTURE_DIR, "wrmf_cg_loss.txt"))
             m_cg = WeightedMatrixFactorization(rank=RANK, λ=λ_r, α=α_r, max_iter=50,
-                        solver=CONJUGATE_GRADIENT, cg_steps=10, feedback=IMPLICIT)
+                        solver=ConjugateGradient(), cg_steps=10, feedback=IMPLICIT)
             fit!(m_cg, X_ref; rng=MersenneTwister(42), convergence_tol=1e-6)
             jl_loss_cg = _wrmf_loss(m_cg.user_factors, m_cg.item_factors,
                                      X_ref, λ_r, α_r)

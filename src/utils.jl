@@ -53,19 +53,13 @@ Safe reciprocal that avoids division by zero.
     link_function(family::Family, x)
 
 Apply the GLM link function for the given family:
-- `BINOMIAL` → sigmoid(x)
-- `GAUSSIAN` → x (identity)
-- `POISSON` → exp(x)
+- `Binomial()` → sigmoid(x)
+- `Gaussian()` → x (identity)
+- `Poisson()` → exp(x)
 """
-@inline function link_function(family::Family, x::T) where {T<:AbstractFloat}
-    if family == BINOMIAL
-        return sigmoid(x)
-    elseif family == GAUSSIAN
-        return x
-    else  # POISSON
-        return exp(x)
-    end
-end
+@inline link_function(::Binomial, x::T) where {T<:AbstractFloat} = sigmoid(x)
+@inline link_function(::Gaussian, x::T) where {T<:AbstractFloat} = x
+@inline link_function(::Poisson, x::T) where {T<:AbstractFloat} = exp(x)
 
 """
     _inplace_shuffle!(v, rng) -> v

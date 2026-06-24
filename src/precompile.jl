@@ -15,13 +15,13 @@ import PrecompileTools: @setup_workload, @compile_workload
         X_small = sprand(rng, n_users, n_items, 0.3)
 
         # WeightedMatrixFactorization with CG solver
-        m_cg = WeightedMatrixFactorization(rank=4, λ=0.1, α=1.0, max_iter=2, solver=CONJUGATE_GRADIENT, verbose=false)
+        m_cg = WeightedMatrixFactorization(rank=4, λ=0.1, α=1.0, max_iter=2, solver=ConjugateGradient(), verbose=false)
         fit!(m_cg, X_small; rng=MersenneTwister(2))
         recommend(m_cg, X_small; k=3)
         transform(m_cg, X_small)
 
         # WeightedMatrixFactorization with Cholesky solver
-        m_ch = WeightedMatrixFactorization(rank=4, λ=0.1, α=1.0, max_iter=2, solver=CHOLESKY, verbose=false)
+        m_ch = WeightedMatrixFactorization(rank=4, λ=0.1, α=1.0, max_iter=2, solver=CholeskySolver(), verbose=false)
         fit!(m_ch, X_small; rng=MersenneTwister(3))
 
         # iALS

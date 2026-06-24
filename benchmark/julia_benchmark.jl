@@ -40,7 +40,7 @@ RANK = 10; LAMBDA = 0.1; ALPHA = 1.0; N_ITER = 10
 # ─────────────────────────────────────────────
 # 2. WeightedMatrixFactorization — correctness vs R
 # ─────────────────────────────────────────────
-println("\n--- WeightedMatrixFactorization Correctness vs R (small, Cholesky, 10 iter) ---")
+println("\n--- WeightedMatrixFactorization Correctness vs R (small, CholeskySolver, 10 iter) ---")
 
 # Load R reference factors
 r_user_raw = CSV.read("/tmp/r_user_emb_small.csv", DataFrame)
@@ -57,7 +57,7 @@ println("  R item F-norm: $(@sprintf("%.6f", norm(R_item)))")
 
 rng = MersenneTwister(42)
 model_jl = WeightedMatrixFactorization(rank=RANK, λ=LAMBDA, α=ALPHA, max_iter=N_ITER,
-                solver=CHOLESKY, feedback=IMPLICIT)
+                solver=CholeskySolver(), feedback=IMPLICIT)
 t_small_chol = @elapsed fit!(model_jl, X_small; rng=rng)
 
 println("  Julia user factors shape: $(size(model_jl.user_factors))")
@@ -109,14 +109,14 @@ function bench_wrmf_elapsed(X, solver, n_iter=N_ITER, n_runs=3)
     minimum(times)
 end
 
-t_jl_small_chol  = bench_wrmf_elapsed(X_small,  CHOLESKY)
-t_jl_medium_chol = bench_wrmf_elapsed(X_medium, CHOLESKY)
-t_jl_large_chol  = bench_wrmf_elapsed(X_large,  CHOLESKY, N_ITER, 1)
-t_jl_medium_cg   = bench_wrmf_elapsed(X_medium, CONJUGATE_GRADIENT)
+t_jl_small_chol  = bench_wrmf_elapsed(X_small,  CholeskySolver())
+t_jl_medium_chol = bench_wrmf_elapsed(X_medium, CholeskySolver())
+t_jl_large_chol  = bench_wrmf_elapsed(X_large,  CholeskySolver(), N_ITER, 1)
+t_jl_medium_cg   = bench_wrmf_elapsed(X_medium, ConjugateGradient())
 
-println("  Small  ($(size(X_small)))   Cholesky: $(@sprintf("%.3f", t_jl_small_chol)) s")
-println("  Medium ($(size(X_medium))) Cholesky: $(@sprintf("%.3f", t_jl_medium_chol)) s")
-println("  Large  ($(size(X_large)))  Cholesky: $(@sprintf("%.3f", t_jl_large_chol)) s")
+println("  Small  ($(size(X_small)))   CholeskySolver: $(@sprintf("%.3f", t_jl_small_chol)) s")
+println("  Medium ($(size(X_medium))) CholeskySolver: $(@sprintf("%.3f", t_jl_medium_chol)) s")
+println("  Large  ($(size(X_large)))  CholeskySolver: $(@sprintf("%.3f", t_jl_large_chol)) s")
 println("  Medium ($(size(X_medium))) CG:       $(@sprintf("%.3f", t_jl_medium_cg)) s")
 
 # ─────────────────────────────────────────────

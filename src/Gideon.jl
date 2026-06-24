@@ -47,10 +47,10 @@ export
     AbstractMatrixFactorization,
     AbstractItemSimilarity,
     AbstractSparseRegression,
-    ALSSolver, CHOLESKY, CONJUGATE_GRADIENT, NNLS,
+    ALSSolver, CholeskySolver, ConjugateGradient, NonNegative,
     FeedbackType, IMPLICIT, EXPLICIT,
-    Family, BINOMIAL, GAUSSIAN, POISSON,
-    NegativeSampling, UNIFORM, POPULAR, DYNAMIC,
+    Family, Binomial, Gaussian, Poisson,
+    NegativeSampling, Uniform, Popular, Dynamic,
 
     # Models
     WeightedMatrixFactorization,
