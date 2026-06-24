@@ -1,9 +1,9 @@
 # ──────────────────────────────────────────────────────────────────────────────
-# GloVe — Global Vectors for co-occurrence matrix factorization
+# GlobalVectors — Global Vectors for co-occurrence matrix factorization
 # ──────────────────────────────────────────────────────────────────────────────
 #
 # Reference: Pennington, Socher, Manning (2014)
-#   "GloVe: Global Vectors for Word Representation"
+#   "GlobalVectors: Global Vectors for Word Representation"
 #
 # Loss:
 #   L = Σ_{i,j} f(X_{ij}) (wᵢᵀ w̃ⱼ + bᵢ + b̃ⱼ - log X_{ij})²
@@ -12,16 +12,16 @@
 # ──────────────────────────────────────────────────────────────────────────────
 
 """
-    GloVe{T} <: AbstractMatrixFactorization
+    GlobalVectors{T} <: AbstractMatrixFactorization
 
-GloVe matrix factorization with AdaGrad-based SGD (Hogwild parallel).
+GlobalVectors matrix factorization with AdaGrad-based SGD (Hogwild parallel).
 
 Learns word/item embeddings from a co-occurrence matrix by factorizing
 the log-count matrix with a weighting function that caps frequent pairs.
 
 # Constructor
 ```julia
-GloVe(; rank=50, x_max=100.0, learning_rate=0.05, α=0.75, λ=0.0,
+GlobalVectors(; rank=50, x_max=100.0, learning_rate=0.05, α=0.75, λ=0.0,
         max_iter=25, convergence_tol=-1.0, shuffle=false, verbose=true)
 ```
 
@@ -34,12 +34,12 @@ cooccur = sprand(10000, 10000, 0.001)
 cooccur = cooccur + cooccur'
 nonzeros(cooccur) .= abs.(nonzeros(cooccur)) .+ 0.1
 
-model = GloVe(rank=100, x_max=100.0, learning_rate=0.05, max_iter=25)
+model = GlobalVectors(rank=100, x_max=100.0, learning_rate=0.05, max_iter=25)
 fit!(model, cooccur)
-embeddings = get_embeddings(model)
+embeddings = embeddings(model)
 ```
 """
-mutable struct GloVe{T<:AbstractFloat} <: AbstractMatrixFactorization
+mutable struct GlobalVectors{T<:AbstractFloat} <: AbstractMatrixFactorization
     const rank::Int
     const x_max::T
     learning_rate::T
@@ -59,11 +59,11 @@ mutable struct GloVe{T<:AbstractFloat} <: AbstractMatrixFactorization
     grad_W_ctx::Matrix{T}
     grad_b_main::Vector{T}
     grad_b_ctx::Vector{T}
-    cost_history::Vector{T}
+    loss_history::Vector{T}
     is_fitted::Bool
 end
 
-function GloVe(;
+function GlobalVectors(;
     rank::Int = 50,
     x_max::Float64 = 100.0,
     learning_rate::Float64 = 0.05,
@@ -78,7 +78,7 @@ function GloVe(;
     x_max > 0.0 || throw(ArgumentError("x_max must be positive, got $x_max"))
     learning_rate > 0.0 || throw(ArgumentError("learning_rate must be positive, got $learning_rate"))
     T = Float64
-    GloVe{T}(
+    GlobalVectors{T}(
         rank, x_max, learning_rate, α, λ, max_iter, convergence_tol, shuffle, verbose,
         Matrix{T}(undef,0,0), Matrix{T}(undef,0,0),
         T[], T[],
@@ -93,18 +93,16 @@ end
 # ──────────────────────────────────────────────────────────────────────────────
 
 """
-    fit!(model::GloVe, X; n_iter, rng) -> model
+    fit!(model::GlobalVectors, X; rng, callbacks) -> model
 
-Fit GloVe on a square co-occurrence matrix `X` (all values must be positive).
+Fit GlobalVectors on a square co-occurrence matrix `X` (all values must be positive).
 Uses Hogwild-style parallel SGD with AdaGrad.
 """
-function fit!(model::GloVe{T}, X::SparseMatrixCSC{Tv,Ti};
-              n_iter::Int = model.max_iter,
-              convergence_tol::Float64 = model.convergence_tol,
+function fit!(model::GlobalVectors{T}, X::SparseMatrixCSC{Tv,Ti};
               rng::AbstractRNG = Random.default_rng(),
               callbacks::Vector{<:AbstractCallback} = AbstractCallback[]) where {T,Tv,Ti}
     n = size(X, 1)
-    size(X, 1) == size(X, 2) || throw(ArgumentError("GloVe requires a square co-occurrence matrix, got $(size(X, 1))×$(size(X, 2))"))
+    size(X, 1) == size(X, 2) || throw(ArgumentError("GlobalVectors requires a square co-occurrence matrix, got $(size(X, 1))×$(size(X, 2))"))
     all(x -> x > 0, nonzeros(X)) || throw(ArgumentError("All co-occurrence values must be positive"))
 
     k = model.rank
@@ -118,15 +116,15 @@ function fit!(model::GloVe{T}, X::SparseMatrixCSC{Tv,Ti};
     model.grad_W_ctx  = ones(T, k, n)
     model.grad_b_main = ones(T, n)
     model.grad_b_ctx  = ones(T, n)
-    model.cost_history = T[]
+    model.loss_history = T[]
 
     # Extract COO triplets
     rows, cols, vals = findnz(X)
     nnz_count = length(rows)
 
-    monitor = ConvergenceMonitor{T}(tol=T(convergence_tol), min_iter=2)
+    monitor = ConvergenceMonitor{T}(tol=T(model.convergence_tol), min_iter=2)
 
-    for iter in 1:n_iter
+    for iter in 1:model.max_iter
         iter_start = time_ns()
         order = if model.shuffle
             _inplace_shuffle!(collect(1:nnz_count), rng)
@@ -136,21 +134,21 @@ function fit!(model::GloVe{T}, X::SparseMatrixCSC{Tv,Ti};
         epoch_cost = _glove_epoch!(model, rows, cols, vals, order)
 
         if isnan(epoch_cost)
-            error("GloVe: cost became NaN — try a smaller learning_rate")
+            error("GlobalVectors: cost became NaN — try a smaller learning_rate")
         end
 
         avg_cost = epoch_cost / nnz_count
-        push!(model.cost_history, avg_cost)
+        push!(model.loss_history, avg_cost)
         iter_seconds = (time_ns() - iter_start) / 1e9
         total_seconds = elapsed_seconds(monitor)
 
         if model.verbose
-            log_iteration("GloVe", iter, n_iter, Float64(avg_cost),
+            log_iteration("GlobalVectors", iter, model.max_iter, Float64(avg_cost),
                          iter_seconds, total_seconds)
         end
 
         if record!(monitor, avg_cost)
-            model.verbose && @info "[GloVe] converged at iteration $iter"
+            model.verbose && @info "[GlobalVectors] converged at iteration $iter"
             break
         end
 
@@ -163,7 +161,7 @@ function fit!(model::GloVe{T}, X::SparseMatrixCSC{Tv,Ti};
     model
 end
 
-function _glove_epoch!(model::GloVe{T}, rows, cols, vals, order) where {T}
+function _glove_epoch!(model::GlobalVectors{T}, rows, cols, vals, order) where {T}
     k  = model.rank
     lr = model.learning_rate
     x_max = model.x_max
@@ -225,46 +223,46 @@ function _glove_epoch!(model::GloVe{T}, rows, cols, vals, order) where {T}
 end
 
 """
-    get_embeddings(model::GloVe) -> Matrix
+    embeddings(model::GlobalVectors) -> Matrix
 
 Return the combined word embeddings `W_main + W_ctx` (each column is an embedding vector).
 """
-function get_embeddings(model::GloVe{T}) where {T}
+function embeddings(model::GlobalVectors{T}) where {T}
     model.is_fitted || error("Model not fitted")
     model.W_main .+ model.W_ctx
 end
 
 """
-    recommend(model::GloVe, X; k=10) -> Matrix{Int}
+    recommend(model::GlobalVectors, X; k=10) -> Matrix{Int}
 
 Return top-k most similar items per row, excluding self-interactions.
-Uses the combined GloVe embeddings for scoring.
+Uses the combined GlobalVectors embeddings for scoring.
 """
-function recommend(model::GloVe{T}, X::SparseMatrixCSC; k::Int=10) where {T}
+function recommend(model::GlobalVectors{T}, X::SparseMatrixCSC; k::Int=10) where {T}
     model.is_fitted || error("Model not fitted")
-    embeddings = get_embeddings(model)
-    _predict_topk_batched(embeddings, embeddings, to_csr(X), k)
+    E = embeddings(model)
+    _predict_topk_batched(E, E, to_csr(X), k)
 end
 
 """
-    score(model::GloVe, X) -> Matrix
+    score(model::GlobalVectors, X) -> Matrix
 
 Return the full score matrix using combined embeddings: E' * E.
 """
-function score(model::GloVe{T}, X::SparseMatrixCSC) where {T}
+function score(model::GlobalVectors{T}, X::SparseMatrixCSC) where {T}
     model.is_fitted || error("Model not fitted")
-    E = get_embeddings(model)
+    E = embeddings(model)
     E' * E
 end
 
 """
-    score(model::GloVe, row_indices, col_indices) -> Vector
+    score(model::GlobalVectors, row_indices, col_indices) -> Vector
 
 Return pairwise similarity scores for specific (row, col) index pairs.
 """
-function score(model::GloVe{T}, row_indices::AbstractVector{<:Integer},
+function score(model::GlobalVectors{T}, row_indices::AbstractVector{<:Integer},
                col_indices::AbstractVector{<:Integer}) where {T}
     model.is_fitted || error("Model not fitted")
-    E = get_embeddings(model)
+    E = embeddings(model)
     _predict_pairwise_scores(E, E, row_indices, col_indices)
 end

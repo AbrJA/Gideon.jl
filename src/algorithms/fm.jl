@@ -21,7 +21,7 @@ the `family` parameter. Uses per-coordinate adaptive learning rates (AdaGrad).
 ```julia
 FactorizationMachine(; rank=4, learning_rate_w=0.2, learning_rate_v=learning_rate_w,
                        λ_w=0.0, λ_v=0.0, family=BINOMIAL, intercept=true,
-                       n_iter=10, convergence_tol=-1.0, verbose=true)
+                       max_iter=10, convergence_tol=-1.0, verbose=true)
 ```
 
 # Example
@@ -31,7 +31,7 @@ using SparseArrays, Gideon
 X = sprand(10000, 1000, 0.01)
 y = rand([0.0, 1.0], 10000)
 model = FactorizationMachine(rank=8, family=BINOMIAL)
-fit!(model, X, y; n_iter=20)
+fit!(model, X, y)
 preds = predict(model, X)
 ```
 """
@@ -43,7 +43,7 @@ mutable struct FactorizationMachine{T<:AbstractFloat} <: AbstractSparseRegressio
     const λ_v::T
     const family::Family
     const intercept::Bool
-    const n_iter::Int
+    const max_iter::Int
     const convergence_tol::T
     const verbose::Bool
     n_features::Int
@@ -63,7 +63,7 @@ function FactorizationMachine(;
     λ_v::Float64 = 0.0,
     family::Family = BINOMIAL,
     intercept::Bool = true,
-    n_iter::Int = 10,
+    max_iter::Int = 10,
     convergence_tol::Float64 = -1.0,
     verbose::Bool = true,
 )
@@ -71,22 +71,22 @@ function FactorizationMachine(;
     family in (BINOMIAL, GAUSSIAN) || throw(ArgumentError("FM supports BINOMIAL or GAUSSIAN, got $family"))
     FactorizationMachine{Float64}(
         rank, learning_rate_w, learning_rate_v, λ_w, λ_v, family, intercept,
-        n_iter, convergence_tol, verbose,
+        max_iter, convergence_tol, verbose,
         0, 0.0, Float64[], Matrix{Float64}(undef,0,0),
         Float64[], Matrix{Float64}(undef,0,0), false,
     )
 end
 
 # ──────────────────────────────────────────────────────────────────────────────
-# partial_fit! — single SGD epoch
+# update! — single SGD epoch
 # ──────────────────────────────────────────────────────────────────────────────
 
 """
-    partial_fit!(model::FactorizationMachine, X, y; weights, rng) -> model
+    update!(model::FactorizationMachine, X, y; weights, rng) -> model
 
 Run a single SGD epoch over the data.
 """
-function partial_fit!(model::FactorizationMachine{T}, X::SparseMatrixCSC{Tv,Ti},
+function update!(model::FactorizationMachine{T}, X::SparseMatrixCSC{Tv,Ti},
                       y::AbstractVector;
                       weights::AbstractVector{T} = ones(T, length(y)),
                       rng::AbstractRNG = Random.default_rng()) where {T,Tv,Ti}
@@ -177,25 +177,25 @@ function partial_fit!(model::FactorizationMachine{T}, X::SparseMatrixCSC{Tv,Ti},
 
     if model.verbose
         pass_seconds = (time_ns() - iter_start) / 1e9
-        @info @sprintf("[FM] partial_fit: %d samples, %d features | time=%s",
+        @info @sprintf("[FM] update: %d samples, %d features | time=%s",
                        n_samples, n_features, elapsed_str(pass_seconds))
     end
     model
 end
 
 """
-    fit!(model::FactorizationMachine, X, y; n_iter, kwargs...) -> model
+    fit!(model::FactorizationMachine, X, y; kwargs...) -> model
 
-Train the FM for `n_iter` epochs (defaults to `model.n_iter`).
+Train the FM for `model.max_iter` epochs.
 """
 function fit!(model::FactorizationMachine{T}, X::SparseMatrixCSC, y::AbstractVector;
-              n_iter::Int = model.n_iter, kwargs...) where {T}
+              kwargs...) where {T}
     train_start = time_ns()
     prev_loss = T(Inf)
 
-    for i in 1:n_iter
+    for i in 1:model.max_iter
         epoch_start = time_ns()
-        partial_fit!(model, X, y; kwargs...)
+        update!(model, X, y; kwargs...)
         epoch_seconds = (time_ns() - epoch_start) / 1e9
         total_seconds = (time_ns() - train_start) / 1e9
 
@@ -208,7 +208,7 @@ function fit!(model::FactorizationMachine{T}, X::SparseMatrixCSC, y::AbstractVec
                 sum((preds .- y).^2) / length(y)
             end
             if model.verbose
-                log_iteration("FM", i, n_iter, Float64(loss), epoch_seconds, total_seconds)
+                log_iteration("FM", i, model.max_iter, Float64(loss), epoch_seconds, total_seconds)
             end
             if i > 1 && abs(prev_loss - loss) / (abs(prev_loss) + T(1e-12)) < model.convergence_tol
                 model.verbose && @info "[FM] converged at epoch $i"
@@ -217,7 +217,7 @@ function fit!(model::FactorizationMachine{T}, X::SparseMatrixCSC, y::AbstractVec
             prev_loss = loss
         elseif model.verbose
             @info @sprintf("[FM] epoch %d/%d | epoch=%s | total=%s",
-                           i, n_iter, elapsed_str(epoch_seconds), elapsed_str(total_seconds))
+                           i, model.max_iter, elapsed_str(epoch_seconds), elapsed_str(total_seconds))
         end
     end
     model

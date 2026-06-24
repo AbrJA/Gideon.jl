@@ -6,8 +6,8 @@
 @testset "GPU stubs exist" begin
     # Verify that GPU stub functions are defined even without CUDA
     @test isdefined(Gideon, :fit_gpu!)
-    @test isdefined(Gideon, :predict_gpu)
-    @test isdefined(Gideon, :predict_scores_gpu)
+    @test isdefined(Gideon, :recommend_gpu)
+    @test isdefined(Gideon, :score_gpu)
 end
 
 # Only run GPU tests if CUDA is available
@@ -19,11 +19,11 @@ catch
 end
 
 if HAS_CUDA
-    @testset "GPU EASE" begin
+    @testset "GPU ShallowAutoencoder" begin
         rng = MersenneTwister(42)
         X = sprand(rng, 50, 30, 0.1)
 
-        model = EASE(λ=100.0, verbose=false)
+        model = ShallowAutoencoder(λ=100.0, verbose=false)
         fit_gpu!(model, X)
 
         @test model.is_fitted
@@ -31,7 +31,7 @@ if HAS_CUDA
         @test !any(isnan, model.B)
 
         # Compare with CPU result
-        model_cpu = EASE(λ=100.0, verbose=false)
+        model_cpu = ShallowAutoencoder(λ=100.0, verbose=false)
         fit!(model_cpu, X)
         @test model.B ≈ model_cpu.B atol=1e-4
     end
@@ -40,7 +40,7 @@ if HAS_CUDA
         rng = MersenneTwister(42)
         X = sprand(rng, 50, 30, 0.1)
 
-        model = IALS(rank=8, max_iter=3, verbose=false)
+        model = ImplicitALS(rank=8, max_iter=3, verbose=false)
         fit_gpu!(model, X; rng=MersenneTwister(1))
 
         @test model.is_fitted
@@ -48,14 +48,14 @@ if HAS_CUDA
         @test size(model.item_factors) == (8, 30)
     end
 
-    @testset "GPU predict_scores" begin
+    @testset "GPU score" begin
         rng = MersenneTwister(42)
         X = sprand(rng, 30, 20, 0.1)
 
-        model = IALS(rank=4, max_iter=3, verbose=false)
+        model = ImplicitALS(rank=4, max_iter=3, verbose=false)
         fit!(model, X; rng=MersenneTwister(1))
 
-        scores_gpu = predict_scores_gpu(model, X)
+        scores_gpu = score_gpu(model, X)
         scores_cpu = model.user_factors' * model.item_factors
 
         @test size(scores_gpu) == size(scores_cpu)
@@ -66,10 +66,10 @@ if HAS_CUDA
         rng = MersenneTwister(42)
         X = sprand(rng, 30, 20, 0.1)
 
-        model = IALS(rank=4, max_iter=3, verbose=false)
+        model = ImplicitALS(rank=4, max_iter=3, verbose=false)
         fit!(model, X; rng=MersenneTwister(1))
 
-        preds = predict_gpu(model, X; k=5)
+        preds = recommend_gpu(model, X; k=5)
         @test size(preds) == (30, 5)
         @test all(p -> 1 <= p <= 20, preds)
     end

@@ -115,14 +115,14 @@ using Statistics: mean
 # ─────────────────────────────────────────────
 function benchmark_bpr(X_train, X_test; rank=64, n_iter=50, lr=0.05, λ=0.01)
     println("─" ^ 70)
-    println("BPR — rank=$rank, iters=$n_iter, lr=$lr")
+    println("BayesianPersonalizedRanking — rank=$rank, iters=$n_iter, lr=$lr")
     println("─" ^ 70)
 
-    model = BPR(rank=rank, learning_rate=lr, max_iter=n_iter,
+    model = BayesianPersonalizedRanking(rank=rank, learning_rate=lr, max_iter=n_iter,
                 λ_user=λ, λ_pos=λ, λ_neg=λ, verbose=true)
 
     # Warmup (1 iter)
-    warmup = BPR(rank=rank, learning_rate=lr, max_iter=1,
+    warmup = BayesianPersonalizedRanking(rank=rank, learning_rate=lr, max_iter=1,
                  λ_user=λ, λ_pos=λ, λ_neg=λ, verbose=false)
     fit!(warmup, X_train; rng=MersenneTwister(1))
     predict(warmup, X_train; k=10)
@@ -151,10 +151,10 @@ function benchmark_ials(X_train, X_test; rank=64, n_iter=15, α=40.0, λ=0.1, so
     println("iALS — rank=$rank, iters=$n_iter, α=$α, solver=$solver")
     println("─" ^ 70)
 
-    model = IALS(rank=rank, α=α, λ=λ, max_iter=n_iter, solver=solver, verbose=true)
+    model = ImplicitALS(rank=rank, α=α, λ=λ, max_iter=n_iter, solver=solver, verbose=true)
 
     # Warmup
-    warmup = IALS(rank=rank, α=α, λ=λ, max_iter=1, solver=solver, verbose=false)
+    warmup = ImplicitALS(rank=rank, α=α, λ=λ, max_iter=1, solver=solver, verbose=false)
     fit!(warmup, X_train; rng=MersenneTwister(1))
     predict(warmup, X_train; k=10)
     GC.gc()

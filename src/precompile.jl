@@ -14,61 +14,62 @@ import PrecompileTools: @setup_workload, @compile_workload
         # Small sparse matrix for precompilation
         X_small = sprand(rng, n_users, n_items, 0.3)
 
-        # WRMF with CG solver
-        m_cg = WRMF(rank=4, λ=0.1, α=1.0, max_iter=2, solver=CONJUGATE_GRADIENT, verbose=false)
+        # WeightedMatrixFactorization with CG solver
+        m_cg = WeightedMatrixFactorization(rank=4, λ=0.1, α=1.0, max_iter=2, solver=CONJUGATE_GRADIENT, verbose=false)
         fit!(m_cg, X_small; rng=MersenneTwister(2))
         recommend(m_cg, X_small; k=3)
         transform(m_cg, X_small)
 
-        # WRMF with Cholesky solver
-        m_ch = WRMF(rank=4, λ=0.1, α=1.0, max_iter=2, solver=CHOLESKY, verbose=false)
+        # WeightedMatrixFactorization with Cholesky solver
+        m_ch = WeightedMatrixFactorization(rank=4, λ=0.1, α=1.0, max_iter=2, solver=CHOLESKY, verbose=false)
         fit!(m_ch, X_small; rng=MersenneTwister(3))
 
         # iALS
-        m_ials = IALS(rank=4, λ=0.01, α=10.0, max_iter=2, verbose=false)
+        m_ials = ImplicitALS(rank=4, λ=0.01, α=10.0, max_iter=2, verbose=false)
         fit!(m_ials, X_small; rng=MersenneTwister(4))
         recommend(m_ials, X_small; k=3)
 
-        # BPR
-        m_bpr = BPR(rank=4, max_iter=2, n_samples=20, verbose=false)
+        # BayesianPersonalizedRanking
+        m_bpr = BayesianPersonalizedRanking(rank=4, max_iter=2, n_samples=20, verbose=false)
         fit!(m_bpr, X_small; rng=MersenneTwister(5))
         recommend(m_bpr, X_small; k=3)
 
-        # EASE
-        m_ease = EASE(λ=100.0, verbose=false)
+        # ShallowAutoencoder
+        m_ease = ShallowAutoencoder(λ=100.0, verbose=false)
         fit!(m_ease, X_small)
         recommend(m_ease, X_small; k=3)
 
-        # SLIM
-        m_slim = SLIM(λ₁=0.1, λ₂=0.5, max_iter=5, verbose=false)
+        # SparseLinearModel
+        m_slim = SparseLinearModel(λ_1=0.1, λ_2=0.5, max_iter=5, verbose=false)
         fit!(m_slim, X_small)
         recommend(m_slim, X_small; k=3)
 
-        # GloVe (square matrix)
+        # GlobalVectors (square matrix)
         C = sprand(rng, 10, 10, 0.5)
         C = C + C'
         nonzeros(C) .= abs.(nonzeros(C)) .+ 0.1
-        m_glove = GloVe(rank=4, max_iter=2, verbose=false)
+        m_glove = GlobalVectors(rank=4, max_iter=2, verbose=false)
         fit!(m_glove, C; rng=MersenneTwister(6))
-        get_embeddings(m_glove)
+        embeddings(m_glove)
 
-        # LMF
-        m_lmf = LMF(rank=4, max_iter=2, verbose=false)
+        # LogisticMatrixFactorization
+        m_lmf = LogisticMatrixFactorization(rank=4, max_iter=2, verbose=false)
         fit!(m_lmf, X_small; rng=MersenneTwister(7))
 
-        # FTRL
+        # OnlineRegressor
         y_small = rand(rng, n_users)
-        m_ftrl = FTRL(learning_rate=0.1, verbose=false)
-        partial_fit!(m_ftrl, X_small, y_small; rng=MersenneTwister(8))
+        m_ftrl = OnlineRegressor(learning_rate=0.1, max_iter=1, verbose=false)
+        update!(m_ftrl, X_small, y_small; rng=MersenneTwister(8))
         predict(m_ftrl, X_small)
 
         # FM
-        m_fm = FactorizationMachine(rank=2, n_iter=2, verbose=false)
+        m_fm = FactorizationMachine(rank=2, max_iter=2, verbose=false)
         fit!(m_fm, X_small, y_small; rng=MersenneTwister(9))
         predict(m_fm, X_small)
 
         # SoftImpute
-        soft_impute(X_small; rank=3, max_iter=3, verbose=false)
+        m_si = SoftImpute(rank=3, max_iter=3, verbose=false)
+        fit!(m_si, X_small; rng=MersenneTwister(10))
 
         # Metrics
         preds_small = Matrix{Int}(hcat([randperm(rng, n_items)[1:3] for _ in 1:n_users]...)')

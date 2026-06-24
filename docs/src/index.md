@@ -4,20 +4,20 @@ A high-performance Julia package for sparse matrix factorization, collaborative 
 
 ## Features
 
-- **WRMF** — Weighted Regularized Matrix Factorization (Cholesky, CG & NNLS solvers)
-- **iALS** — Implicit ALS with Gramian caching (Rendle et al. 2021)
+- **WeightedMatrixFactorization** — Weighted Regularized Matrix Factorization (Cholesky, CG & NNLS solvers)
+- **ImplicitALS** — Implicit ALS with Gramian caching (Rendle et al. 2021)
 - **eALS** — Element-wise ALS with popularity-based weighting (He et al. 2016)
-- **BPR** — Bayesian Personalized Ranking (pairwise learning)
-- **LMF** — Logistic Matrix Factorization with negative sampling
-- **GloVe** — Global Vectors for word/item embeddings
-- **EASE** — Embarrassingly Shallow Autoencoders (closed-form)
-- **SLIM** — Sparse Linear Methods (elastic-net item-item)
-- **FTRL** — Follow The Regularized Leader (supports Binomial, Gaussian, Poisson families)
+- **BayesianPersonalizedRanking** — Bayesian Personalized Ranking (pairwise learning)
+- **LogisticMatrixFactorization** — Logistic Matrix Factorization with negative sampling
+- **GlobalVectors** — Global Vectors for word/item embeddings
+- **ShallowAutoencoder** — Embarrassingly Shallow Autoencoders (closed-form)
+- **SparseLinearModel** — Sparse Linear Methods (elastic-net item-item)
+- **OnlineRegressor** — Follow The Regularized Leader (supports Binomial, Gaussian, Poisson families)
 - **Factorization Machines** — Second-order feature interactions with SGD
 - **SoftImpute / SoftSVD** — Nuclear-norm regularized matrix completion
 - **Ranking Metrics** — MAP@k, NDCG@k, Precision@k, Recall@k
 - **Cross-validation** — temporal split, k-fold, grid search, random search
-- **GPU acceleration** — CUDA.jl extension for EASE, iALS, WRMF
+- **GPU acceleration** — CUDA.jl extension for ShallowAutoencoder, ImplicitALS, WeightedMatrixFactorization
 - **Tables.jl integration** — accept interaction data as (user, item, value) triplets
 - **Serialization** — versioned save/load for all models
 
@@ -29,8 +29,8 @@ using Gideon, SparseArrays, Random
 # Create a sparse user-item interaction matrix
 X = sprand(MersenneTwister(42), 1000, 500, 0.02)
 
-# Fit WRMF
-model = WRMF(rank=10, λ=0.1, α=40.0, max_iter=15)
+# Fit WeightedMatrixFactorization
+model = WeightedMatrixFactorization(rank=10, λ=0.1, α=40.0, max_iter=15)
 fit!(model, X)
 
 # Get top-10 recommendations (seen items automatically masked)
@@ -64,8 +64,8 @@ Gideon separates **recommender models** from **regression models** with domain-a
 
 | Model type | Top-k predictions | Raw scores | Regression |
 |---|---|---|---|
-| Recommenders (WRMF, IALS, EASE, ...) | `recommend(model, X; k)` | `score(model, X)` | — |
-| Regression (FTRL, FM) | — | — | `predict(model, X)` |
+| Recommenders (WeightedMatrixFactorization, ImplicitALS, ShallowAutoencoder, ...) | `recommend(model, X; k)` | `score(model, X)` | — |
+| Regression (OnlineRegressor, FM) | — | — | `predict(model, X)` |
 
 All models share `fit!(model, X)` for training. Matrix factorization models additionally support:
 
@@ -77,9 +77,9 @@ The type hierarchy uses Julia's dispatch to provide default implementations:
 ```julia
 AbstractSparseModel
 ├── AbstractRecommender
-│   ├── AbstractMatrixFactorization  # WRMF, IALS, EALS, LMF, BPR, GloVe
-│   └── AbstractItemSimilarity       # EASE, SLIM
-└── AbstractSparseRegression         # FTRL, FactorizationMachine
+│   ├── AbstractMatrixFactorization  # WeightedMatrixFactorization, ImplicitALS, ElementwiseALS, LogisticMatrixFactorization, BayesianPersonalizedRanking, GlobalVectors
+│   └── AbstractItemSimilarity       # ShallowAutoencoder, SparseLinearModel
+└── AbstractSparseRegression         # OnlineRegressor, FactorizationMachine
 ```
 
 New models inheriting from `AbstractMatrixFactorization` automatically get `recommend`,

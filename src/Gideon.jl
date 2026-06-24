@@ -50,19 +50,20 @@ export
     ALSSolver, CHOLESKY, CONJUGATE_GRADIENT, NNLS,
     FeedbackType, IMPLICIT, EXPLICIT,
     Family, BINOMIAL, GAUSSIAN, POISSON,
+    NegativeSampling, UNIFORM, POPULAR, DYNAMIC,
 
     # Models
-    WRMF,
-    IALS,
-    EALS,
-    FTRL,
+    WeightedMatrixFactorization,
+    ImplicitALS,
+    ElementwiseALS,
+    OnlineRegressor,
     FactorizationMachine,
-    GloVe,
-    LMF,
-    BPR,
-    EASE,
-    SLIM,
-    SoftImputeResult,
+    GlobalVectors,
+    LogisticMatrixFactorization,
+    BayesianPersonalizedRanking,
+    ShallowAutoencoder,
+    SparseLinearModel,
+    SoftImpute,
 
     # Generic API
     fit!,
@@ -70,19 +71,14 @@ export
     recommend,
     score,
     predict,
-    predict_scores,
-    predict_scores_gpu,
-    predict_gpu,
+    score_gpu,
+    recommend_gpu,
     fit_gpu!,
-    partial_fit!,
+    update!,
     coef,
     similar_items,
     similar_users,
-
-    # Convenience functions
-    soft_impute,
-    soft_svd,
-    get_embeddings,
+    embeddings,
 
     # Metrics
     ap_at_k,
@@ -93,7 +89,7 @@ export
 
     # Cross-validation & search
     temporal_split,
-    cv_evaluate,
+    crossval,
     grid_search,
     random_search,
 
@@ -106,7 +102,7 @@ export
     EarlyStoppingCallback,
     LossHistoryCallback,
     CheckpointCallback,
-    LearningRateScheduler,
+    LearningRateCallback,
     run_callbacks,
     run_callbacks_train_begin,
     run_callbacks_train_end,
@@ -132,7 +128,7 @@ export
 
 # ── GPU stubs (implemented by ext/GideonCUDAExt.jl when CUDA is loaded) ──
 function fit_gpu! end
-function predict_gpu end
-function predict_scores_gpu end
+function recommend_gpu end
+function score_gpu end
 
 end # module Gideon

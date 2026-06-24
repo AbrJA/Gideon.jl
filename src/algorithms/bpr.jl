@@ -1,12 +1,12 @@
 # ──────────────────────────────────────────────────────────────────────────────
-# BPR — Bayesian Personalized Ranking
+# BayesianPersonalizedRanking — Bayesian Personalized Ranking
 # ──────────────────────────────────────────────────────────────────────────────
 #
 # Reference: Rendle, Freudenthaler, Gantner, Schmidt-Thieme (2009)
-#   "BPR: Bayesian Personalized Ranking from Implicit Feedback" (UAI 2009)
+#   "BayesianPersonalizedRanking: Bayesian Personalized Ranking from Implicit Feedback" (UAI 2009)
 #   arXiv:1205.2618
 #
-# Optimizes the AUC-related BPR-Opt criterion:
+# Optimizes the AUC-related BayesianPersonalizedRanking-Opt criterion:
 #   Σ_{(u,i,j) ∈ D_S} ln σ(x̂_{uij}) - λ‖Θ‖²
 #
 # where x̂_{uij} = x̂_{ui} - x̂_{uj} (score difference between positive and
@@ -16,7 +16,7 @@
 # ──────────────────────────────────────────────────────────────────────────────
 
 """
-    BPR{T} <: AbstractMatrixFactorization
+    BayesianPersonalizedRanking{T} <: AbstractMatrixFactorization
 
 Bayesian Personalized Ranking via Matrix Factorization.
 
@@ -24,16 +24,16 @@ Learns user and item embeddings optimized for ranking (AUC) rather than
 pointwise prediction. Uses SGD with negative sampling of (user, pos, neg) triplets.
 
 # Negative Sampling Strategies
-- `:uniform` — standard uniform random sampling (Rendle et al. 2009)
-- `:popular` — popularity-biased sampling (items sampled proportional to sqrt of frequency)
-- `:dns` — Dynamic Negative Sampling: sample `dns_candidates` negatives, pick the
+- `UNIFORM` — standard uniform random sampling (Rendle et al. 2009)
+- `POPULAR` — popularity-biased sampling (items sampled proportional to sqrt of frequency)
+- `DYNAMIC` — Dynamic Negative Sampling: sample `dns_candidates` negatives, pick the
   one with highest score as the "hardest" negative (Zhang et al. 2013)
 
 # Constructor
 ```julia
-BPR(; rank=64, λ_user=0.01, λ_pos=0.01, λ_neg=0.01,
+BayesianPersonalizedRanking(; rank=64, λ_user=0.01, λ_pos=0.01, λ_neg=0.01,
       learning_rate=0.05, max_iter=100, n_samples=0,
-      negative_sampling=:uniform, dns_candidates=5,
+      negative_sampling=UNIFORM, dns_candidates=5,
       convergence_tol=-1.0, verbose=true)
 ```
 
@@ -45,11 +45,11 @@ BPR(; rank=64, λ_user=0.01, λ_pos=0.01, λ_neg=0.01,
 - `learning_rate::T` — SGD step size
 - `max_iter::Int` — number of epochs
 - `n_samples::Int` — samples per epoch (0 = nnz(X))
-- `negative_sampling::Symbol` — `:uniform`, `:popular`, or `:dns`
-- `dns_candidates::Int` — number of candidates for DNS strategy
+- `negative_sampling::NegativeSampling` — `UNIFORM`, `POPULAR`, or `DYNAMIC`
+- `dns_candidates::Int` — number of candidates for DYNAMIC strategy
 - `convergence_tol::T` — AUC-based early stopping tolerance (-1 disables)
 """
-mutable struct BPR{T<:AbstractFloat} <: AbstractMatrixFactorization
+mutable struct BayesianPersonalizedRanking{T<:AbstractFloat} <: AbstractMatrixFactorization
     const rank::Int
     const λ_user::T
     const λ_pos::T
@@ -57,7 +57,7 @@ mutable struct BPR{T<:AbstractFloat} <: AbstractMatrixFactorization
     learning_rate::T
     const max_iter::Int
     const n_samples::Int
-    const negative_sampling::Symbol
+    const negative_sampling::NegativeSampling
     const dns_candidates::Int
     const convergence_tol::T
     const verbose::Bool
@@ -68,7 +68,7 @@ mutable struct BPR{T<:AbstractFloat} <: AbstractMatrixFactorization
     is_fitted::Bool
 end
 
-function BPR(;
+function BayesianPersonalizedRanking(;
     rank::Int = 64,
     λ_user::Float64 = 0.01,
     λ_pos::Float64 = 0.01,
@@ -76,7 +76,7 @@ function BPR(;
     learning_rate::Float64 = 0.05,
     max_iter::Int = 100,
     n_samples::Int = 0,
-    negative_sampling::Symbol = :uniform,
+    negative_sampling::NegativeSampling = UNIFORM,
     dns_candidates::Int = 5,
     convergence_tol::Float64 = -1.0,
     verbose::Bool = true,
@@ -84,10 +84,9 @@ function BPR(;
 )
     rank >= 1 || throw(ArgumentError("rank must be ≥ 1, got $rank"))
     learning_rate > 0.0 || throw(ArgumentError("learning_rate must be positive, got $learning_rate"))
-    negative_sampling in (:uniform, :popular, :dns) || throw(ArgumentError("negative_sampling must be :uniform, :popular, or :dns, got :$negative_sampling"))
     dns_candidates >= 1 || throw(ArgumentError("dns_candidates must be ≥ 1, got $dns_candidates"))
     T = dtype
-    BPR{T}(rank, T(λ_user), T(λ_pos), T(λ_neg), T(learning_rate), max_iter, n_samples,
+    BayesianPersonalizedRanking{T}(rank, T(λ_user), T(λ_pos), T(λ_neg), T(learning_rate), max_iter, n_samples,
             negative_sampling, dns_candidates, T(convergence_tol), verbose,
             Matrix{T}(undef,0,0), Matrix{T}(undef,0,0), T[], false)
 end
@@ -97,9 +96,9 @@ end
 # ──────────────────────────────────────────────────────────────────────────────
 
 """
-    fit!(model::BPR, X; rng) -> model
+    fit!(model::BayesianPersonalizedRanking, X; rng) -> model
 
-Fit BPR-MF on implicit feedback matrix `X` (users × items).
+Fit BayesianPersonalizedRanking-MF on implicit feedback matrix `X` (users × items).
 Non-zero entries are treated as positive interactions.
 
 Uses Hogwild!-style lock-free parallel SGD (Niu et al. 2011) for massive speedup
@@ -107,7 +106,7 @@ on multi-core systems. Each thread processes independent samples with concurrent
 writes to shared factor matrices — safe for sparse problems where collision
 probability is low.
 """
-function fit!(model::BPR{T}, X::SparseMatrixCSC{Tv,Ti};
+function fit!(model::BayesianPersonalizedRanking{T}, X::SparseMatrixCSC{Tv,Ti};
               rng::AbstractRNG = Random.default_rng(),
               callbacks::Vector{<:AbstractCallback} = AbstractCallback[]) where {T,Tv,Ti}
     n_users, n_items = size(X)
@@ -197,7 +196,7 @@ function fit!(model::BPR{T}, X::SparseMatrixCSC{Tv,Ti};
                 # Sample negative item (inline for uniform; call function for others)
                 local sorted_items = user_item_sorted[u]
                 local j_int::Int
-                if neg_strategy == :uniform
+                if neg_strategy == UNIFORM
                     j = rand(local_rng, Int32(1):Int32(n_items))
                     while _insorted(sorted_items, j)
                         j = rand(local_rng, Int32(1):Int32(n_items))
@@ -252,13 +251,13 @@ function fit!(model::BPR{T}, X::SparseMatrixCSC{Tv,Ti};
         if model.verbose
             total_correct = sum(epoch_correct)
             auc_pct = 100.0 * total_correct / samples_per_epoch
-            log_iteration("BPR", epoch, model.max_iter, Float64(avg_loss),
+            log_iteration("BayesianPersonalizedRanking", epoch, model.max_iter, Float64(avg_loss),
                          iter_seconds, total_seconds;
                          extra="auc≈$(round(auc_pct; digits=1))%")
         end
 
         if record!(monitor, avg_loss)
-            model.verbose && @info "[BPR] converged at epoch $epoch"
+            model.verbose && @info "[BayesianPersonalizedRanking] converged at epoch $epoch"
             break
         end
 
@@ -278,24 +277,24 @@ Much faster than Set-based lookup for cache-friendly access patterns.
 """
 function _bpr_sample_negative_fast(rng::AbstractRNG, n_items::Int,
                                    sorted_items::Vector{Int32},
-                                   strategy::Symbol, dns_k::Int,
+                                   strategy::NegativeSampling, dns_k::Int,
                                    pop_cumsum::Vector{T}, pop_total::T,
                                    U::Matrix{T}, V::Matrix{T},
                                    u::Int, k::Int) where {T}
-    if strategy == :uniform
+    if strategy == UNIFORM
         # Rejection sampling with binary search verification
         j = rand(rng, Int32(1):Int32(n_items))
         while _insorted(sorted_items, j)
             j = rand(rng, Int32(1):Int32(n_items))
         end
         return Int(j)
-    elseif strategy == :popular
+    elseif strategy == POPULAR
         j = Int32(_sample_from_cumsum(rng, pop_cumsum, pop_total, n_items))
         while _insorted(sorted_items, j)
             j = Int32(_sample_from_cumsum(rng, pop_cumsum, pop_total, n_items))
         end
         return Int(j)
-    else  # :dns
+    else  # DYNAMIC
         best_j = Int32(0)
         best_score = T(-Inf)
         candidates_found = 0
@@ -334,21 +333,21 @@ function _bpr_sample_negative(rng::AbstractRNG, n_items::Int, items_u_set::Set{I
                               pop_cumsum::Vector{T}, pop_total::T,
                               U::Matrix{T}, V::Matrix{T},
                               u::Int, k::Int) where {T}
-    if strategy == :uniform
+    if strategy == UNIFORM
         # Standard uniform rejection sampling
         j = rand(rng, 1:n_items)
         while j in items_u_set
             j = rand(rng, 1:n_items)
         end
         return j
-    elseif strategy == :popular
+    elseif strategy == POPULAR
         # Popularity-biased: sample proportional to sqrt(item frequency)
         j = _sample_from_cumsum(rng, pop_cumsum, pop_total, n_items)
         while j in items_u_set
             j = _sample_from_cumsum(rng, pop_cumsum, pop_total, n_items)
         end
         return j
-    else  # :dns — Dynamic Negative Sampling
+    else  # DYNAMIC — Dynamic Negative Sampling
         best_j = 0
         best_score = T(-Inf)
         candidates_found = 0

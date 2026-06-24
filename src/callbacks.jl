@@ -107,19 +107,19 @@ function on_epoch_end(cb::CheckpointCallback, info::CallbackInfo)
 end
 
 """
-    LearningRateScheduler(; decay=0.99, min_lr=1e-6)
+    LearningRateCallback(; decay=0.99, min_lr=1e-6)
 
 Decay learning rate geometrically each epoch (model must have a `learning_rate` field).
 """
-mutable struct LearningRateScheduler <: AbstractCallback
+mutable struct LearningRateCallback <: AbstractCallback
     decay::Float64
     min_lr::Float64
 end
 
-LearningRateScheduler(; decay::Float64=0.99, min_lr::Float64=1e-6) =
-    LearningRateScheduler(decay, min_lr)
+LearningRateCallback(; decay::Float64=0.99, min_lr::Float64=1e-6) =
+    LearningRateCallback(decay, min_lr)
 
-function on_epoch_end(cb::LearningRateScheduler, info::CallbackInfo)
+function on_epoch_end(cb::LearningRateCallback, info::CallbackInfo)
     if hasproperty(info.model, :learning_rate)
         new_lr = max(info.model.learning_rate * cb.decay, cb.min_lr)
         info.model.learning_rate = new_lr

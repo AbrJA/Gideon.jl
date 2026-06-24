@@ -1,5 +1,5 @@
 # ──────────────────────────────────────────────────────────────────────────────
-# FTRL — Follow The Regularized Leader (Proximal SGD)
+# OnlineRegressor — Follow The Regularized Leader (Proximal SGD)
 # ──────────────────────────────────────────────────────────────────────────────
 #
 # Reference: McMahan et al. (2013)
@@ -10,7 +10,7 @@
 # ──────────────────────────────────────────────────────────────────────────────
 
 """
-    FTRL{T} <: AbstractSparseRegression
+    OnlineRegressor{T} <: AbstractSparseRegression
 
 Follow The Regularized Leader proximal SGD for generalized linear models on sparse data.
 
@@ -21,7 +21,7 @@ Supports three families:
 
 # Constructor
 ```julia
-FTRL(; learning_rate=0.1, learning_rate_decay=0.5, λ=0.0, l1_ratio=1.0,
+OnlineRegressor(; learning_rate=0.1, learning_rate_decay=0.5, λ=0.0, l1_ratio=1.0,
        dropout=0.0, family=BINOMIAL, clip_gradient=1000.0, verbose=true)
 ```
 
@@ -31,13 +31,13 @@ using SparseArrays, Gideon
 
 X = sprand(10000, 1000, 0.01)
 y = rand([0.0, 1.0], 10000)
-model = FTRL(learning_rate=0.1, λ=0.01, l1_ratio=0.5, family=BINOMIAL)
-fit!(model, X, y; n_iter=5)
+model = OnlineRegressor(learning_rate=0.1, λ=0.01, l1_ratio=0.5, family=BINOMIAL, max_iter=5)
+fit!(model, X, y)
 predictions = predict(model, X)
 weights = coef(model)
 ```
 """
-mutable struct FTRL{T<:AbstractFloat} <: AbstractSparseRegression
+mutable struct OnlineRegressor{T<:AbstractFloat} <: AbstractSparseRegression
     learning_rate::T
     const learning_rate_decay::T
     const λ::T
@@ -45,6 +45,7 @@ mutable struct FTRL{T<:AbstractFloat} <: AbstractSparseRegression
     const dropout::T
     const family::Family
     const clip_gradient::T
+    const max_iter::Int
     const verbose::Bool
     n_features::Int
     z::Vector{T}
@@ -52,7 +53,7 @@ mutable struct FTRL{T<:AbstractFloat} <: AbstractSparseRegression
     is_initialized::Bool
 end
 
-function FTRL(;
+function OnlineRegressor(;
     learning_rate::Float64 = 0.1,
     learning_rate_decay::Float64 = 0.5,
     λ::Float64 = 0.0,
@@ -60,6 +61,7 @@ function FTRL(;
     dropout::Float64 = 0.0,
     family::Family = BINOMIAL,
     clip_gradient::Float64 = 1000.0,
+    max_iter::Int = 1,
     verbose::Bool = true,
 )
     0.0 <= dropout < 1.0 || throw(ArgumentError("dropout must be in [0, 1), got $dropout"))
@@ -68,22 +70,22 @@ function FTRL(;
     learning_rate > 0.0 || throw(ArgumentError("learning_rate must be positive, got $learning_rate"))
     learning_rate_decay > 0.0 || throw(ArgumentError("learning_rate_decay must be positive, got $learning_rate_decay"))
     clip_gradient > 0.0 || throw(ArgumentError("clip_gradient must be positive, got $clip_gradient"))
-    FTRL{Float64}(learning_rate, learning_rate_decay, λ, l1_ratio, dropout,
-                  family, clip_gradient, verbose,
+    OnlineRegressor{Float64}(learning_rate, learning_rate_decay, λ, l1_ratio, dropout,
+                  family, clip_gradient, max_iter, verbose,
                   0, Float64[], Float64[], false)
 end
 
 # ──────────────────────────────────────────────────────────────────────────────
-# partial_fit! — single epoch (online / streaming)
+# update! — single epoch (online / streaming)
 # ──────────────────────────────────────────────────────────────────────────────
 
 """
-    partial_fit!(model::FTRL, X, y; weights, rng) -> model
+    update!(model::OnlineRegressor, X, y; weights, rng) -> model
 
-Run a single epoch of FTRL-proximal SGD over the data.
+Run a single epoch of proximal SGD over the data.
 Supports online/streaming learning — can be called repeatedly.
 """
-function partial_fit!(model::FTRL{T}, X::SparseMatrixCSC{Tv,Ti}, y::AbstractVector;
+function update!(model::OnlineRegressor{T}, X::SparseMatrixCSC{Tv,Ti}, y::AbstractVector;
                       weights::AbstractVector{T} = ones(T, length(y)),
                       rng::AbstractRNG = Random.default_rng()) where {T,Tv,Ti}
     iter_start = time_ns()
@@ -148,28 +150,28 @@ function partial_fit!(model::FTRL{T}, X::SparseMatrixCSC{Tv,Ti}, y::AbstractVect
 
     if model.verbose
         pass_seconds = (time_ns() - iter_start) / 1e9
-        @info @sprintf("[FTRL] partial_fit: %d samples, %d features | time=%s",
+        @info @sprintf("[OnlineRegressor] update: %d samples, %d features | time=%s",
                        n_samples, n_features, elapsed_str(pass_seconds))
     end
     model
 end
 
 """
-    fit!(model::FTRL, X, y; n_iter=1, kwargs...) -> model
+    fit!(model::OnlineRegressor, X, y; kwargs...) -> model
 
-Train the FTRL model for `n_iter` epochs over the full dataset.
+Train the OnlineRegressor model for `model.max_iter` epochs over the full dataset.
 """
-function fit!(model::FTRL{T}, X::SparseMatrixCSC, y::AbstractVector;
-              n_iter::Int = 1, kwargs...) where {T}
+function fit!(model::OnlineRegressor{T}, X::SparseMatrixCSC, y::AbstractVector;
+              kwargs...) where {T}
     train_start = time_ns()
-    for i in 1:n_iter
+    for i in 1:model.max_iter
         epoch_start = time_ns()
-        partial_fit!(model, X, y; kwargs...)
+        update!(model, X, y; kwargs...)
         epoch_seconds = (time_ns() - epoch_start) / 1e9
         total_seconds = (time_ns() - train_start) / 1e9
         if model.verbose
-            @info @sprintf("[FTRL] epoch %d/%d | epoch=%s | total=%s",
-                           i, n_iter, elapsed_str(epoch_seconds), elapsed_str(total_seconds))
+            @info @sprintf("[OnlineRegressor] epoch %d/%d | epoch=%s | total=%s",
+                           i, model.max_iter, elapsed_str(epoch_seconds), elapsed_str(total_seconds))
         end
     end
     model
@@ -180,14 +182,14 @@ end
 # ──────────────────────────────────────────────────────────────────────────────
 
 """
-    predict(model::FTRL, X) -> Vector
+    predict(model::OnlineRegressor, X) -> Vector
 
 Generate predictions using the fitted model. Output depends on family:
 - `BINOMIAL` → probabilities in [0,1]
 - `GAUSSIAN` → real-valued predictions
 - `POISSON`  → positive count predictions
 """
-function predict(model::FTRL{T}, X::SparseMatrixCSC) where {T}
+function predict(model::OnlineRegressor{T}, X::SparseMatrixCSC) where {T}
     model.is_initialized || error("Model not fitted")
     n_samples = size(X, 1)
     size(X, 2) == model.n_features || throw(DimensionMismatch("Feature dimension mismatch: expected $(model.n_features), got $(size(X, 2))"))
@@ -211,11 +213,11 @@ function predict(model::FTRL{T}, X::SparseMatrixCSC) where {T}
 end
 
 """
-    coef(model::FTRL) -> Vector
+    coef(model::OnlineRegressor) -> Vector
 
-Return the model coefficient vector derived from the FTRL state.
+Return the model coefficient vector derived from the OnlineRegressor state.
 """
-function coef(model::FTRL{T}) where {T}
+function coef(model::OnlineRegressor{T}) where {T}
     model.is_initialized || error("Model not fitted")
     w = Vector{T}(undef, model.n_features)
     lr = model.learning_rate
@@ -229,7 +231,7 @@ function coef(model::FTRL{T}) where {T}
 end
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Internal: compute effective weight from FTRL state
+# Internal: compute effective weight from OnlineRegressor state
 # ──────────────────────────────────────────────────────────────────────────────
 
 @inline function _ftrl_weight(zj::T, nj::T, lr::T, β::T, λ1::T, λ2::T) where {T}

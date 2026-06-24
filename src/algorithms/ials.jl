@@ -18,7 +18,7 @@
 # ──────────────────────────────────────────────────────────────────────────────
 
 """
-    IALS{T} <: AbstractMatrixFactorization
+    ImplicitALS{T} <: AbstractMatrixFactorization
 
 Implicit Alternating Least Squares with efficient Gramian caching.
 
@@ -36,7 +36,7 @@ O(nnz_per_user × d² + d³) per user, which is dramatically faster for sparse d
 
 # Constructor
 ```julia
-IALS(; rank=64, λ=0.01, α=40.0, max_iter=15, convergence_tol=0.005,
+ImplicitALS(; rank=64, λ=0.01, α=40.0, max_iter=15, convergence_tol=0.005,
        solver=CHOLESKY, cg_steps=3, verbose=true)
 ```
 
@@ -51,7 +51,7 @@ IALS(; rank=64, λ=0.01, α=40.0, max_iter=15, convergence_tol=0.005,
 - `user_factors::Matrix{T}` — (rank × n_users) after fitting
 - `item_factors::Matrix{T}` — (rank × n_items) after fitting
 """
-mutable struct IALS{T<:AbstractFloat} <: AbstractMatrixFactorization
+mutable struct ImplicitALS{T<:AbstractFloat} <: AbstractMatrixFactorization
     const rank::Int
     const λ::T
     const α::T
@@ -66,7 +66,7 @@ mutable struct IALS{T<:AbstractFloat} <: AbstractMatrixFactorization
     is_fitted::Bool
 end
 
-function IALS(;
+function ImplicitALS(;
     rank::Int = 64,
     λ::Float64 = 0.01,
     α::Float64 = 40.0,
@@ -83,7 +83,7 @@ function IALS(;
     solver in (CHOLESKY, CONJUGATE_GRADIENT) || throw(ArgumentError("solver must be CHOLESKY or CONJUGATE_GRADIENT, got $solver"))
     cg_steps >= 1 || throw(ArgumentError("cg_steps must be ≥ 1, got $cg_steps"))
     T = dtype
-    IALS{T}(rank, T(λ), T(α), max_iter, T(convergence_tol), solver, cg_steps, verbose,
+    ImplicitALS{T}(rank, T(λ), T(α), max_iter, T(convergence_tol), solver, cg_steps, verbose,
             Matrix{T}(undef,0,0), Matrix{T}(undef,0,0), false)
 end
 
@@ -92,14 +92,14 @@ end
 # ──────────────────────────────────────────────────────────────────────────────
 
 """
-    fit!(model::IALS, X; rng, U_init, V_init) -> model
+    fit!(model::ImplicitALS, X; rng, U_init, V_init) -> model
 
 Fit iALS on sparse interaction matrix `X` (users × items).
 
 Uses the efficient Gramian-caching approach: precomputes `YᵀY` (or `XᵀX`) once
 per iteration, then adds per-user diagonal corrections from non-zero entries.
 """
-function fit!(model::IALS{T}, X::SparseMatrixCSC{Tv,Ti};
+function fit!(model::ImplicitALS{T}, X::SparseMatrixCSC{Tv,Ti};
               rng::AbstractRNG = Random.default_rng(),
               U_init::Union{Nothing,AbstractMatrix} = nothing,
               V_init::Union{Nothing,AbstractMatrix} = nothing,

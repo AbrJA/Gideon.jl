@@ -83,7 +83,7 @@ end
 
 """
 Binary search in a sorted Int32 vector. O(log n) and cache-friendly.
-Used by BPR and LMF for negative sampling.
+Used by BayesianPersonalizedRanking and LogisticMatrixFactorization for negative sampling.
 """
 @inline function _insorted(sorted::Vector{Int32}, val::Int32)
     lo, hi = 1, length(sorted)
@@ -229,7 +229,7 @@ end
 # Default recommend/score for AbstractMatrixFactorization
 # ──────────────────────────────────────────────────────────────────────────────
 # Models with user_factors/item_factors get these for free.
-# Override only when special logic is needed (e.g. WRMF transform, GloVe embeddings).
+# Override only when special logic is needed (e.g. WeightedMatrixFactorization transform, GlobalVectors embeddings).
 
 function recommend(model::AbstractMatrixFactorization, X::SparseMatrixCSC; k::Int=10)
     model.is_fitted || error("Model not fitted")
@@ -304,7 +304,7 @@ function similar_items(model::AbstractMatrixFactorization, item_id::Int; k::Int=
     factors = if hasproperty(model, :item_factors)
         model.item_factors
     else
-        get_embeddings(model)
+        embeddings(model)
     end
     _cosine_topk(factors, item_id, k)
 end
@@ -320,7 +320,7 @@ function similar_users(model::AbstractMatrixFactorization, user_id::Int; k::Int=
     factors = if hasproperty(model, :user_factors)
         model.user_factors
     else
-        get_embeddings(model)
+        embeddings(model)
     end
     _cosine_topk(factors, user_id, k)
 end

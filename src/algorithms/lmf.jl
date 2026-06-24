@@ -1,5 +1,5 @@
 # ──────────────────────────────────────────────────────────────────────────────
-# Logistic Matrix Factorization (LMF)
+# Logistic Matrix Factorization (LogisticMatrixFactorization)
 # ──────────────────────────────────────────────────────────────────────────────
 #
 # Reference: Johnson (2014)
@@ -11,13 +11,13 @@
 # ──────────────────────────────────────────────────────────────────────────────
 
 """
-    LMF{T} <: AbstractMatrixFactorization
+    LogisticMatrixFactorization{T} <: AbstractMatrixFactorization
 
 Logistic Matrix Factorization for implicit feedback via SGD with negative sampling.
 
 # Constructor
 ```julia
-LMF(; rank=10, λ=0.1, α=1.0, learning_rate=0.01, max_iter=10,
+LogisticMatrixFactorization(; rank=10, λ=0.1, α=1.0, learning_rate=0.01, max_iter=10,
       n_negative=4, convergence_tol=-1.0, verbose=true)
 ```
 
@@ -26,12 +26,12 @@ LMF(; rank=10, λ=0.1, α=1.0, learning_rate=0.01, max_iter=10,
 using SparseArrays, Gideon
 
 X = sprand(1000, 500, 0.01)
-model = LMF(rank=32, max_iter=20, learning_rate=0.01)
+model = LogisticMatrixFactorization(rank=32, max_iter=20, learning_rate=0.01)
 fit!(model, X)
 top_items = recommend(model, X; k=10)
 ```
 """
-mutable struct LMF{T<:AbstractFloat} <: AbstractMatrixFactorization
+mutable struct LogisticMatrixFactorization{T<:AbstractFloat} <: AbstractMatrixFactorization
     const rank::Int
     const λ::T
     const α::T
@@ -45,7 +45,7 @@ mutable struct LMF{T<:AbstractFloat} <: AbstractMatrixFactorization
     is_fitted::Bool
 end
 
-function LMF(;
+function LogisticMatrixFactorization(;
     rank::Int = 10,
     λ::Float64 = 0.1,
     α::Float64 = 1.0,
@@ -61,17 +61,17 @@ function LMF(;
     learning_rate > 0.0 || throw(ArgumentError("learning_rate must be positive, got $learning_rate"))
     n_negative >= 1 || throw(ArgumentError("n_negative must be ≥ 1, got $n_negative"))
     Td = dtype
-    LMF{Td}(rank, Td(λ), Td(α), Td(learning_rate), max_iter, n_negative, Td(convergence_tol),
+    LogisticMatrixFactorization{Td}(rank, Td(λ), Td(α), Td(learning_rate), max_iter, n_negative, Td(convergence_tol),
             verbose, Matrix{Td}(undef,0,0), Matrix{Td}(undef,0,0), false)
 end
 
 """
-    fit!(model::LMF, X; rng) -> model
+    fit!(model::LogisticMatrixFactorization, X; rng) -> model
 
-Fit the LMF model on user-item interaction matrix `X` (n_users × n_items).
+Fit the LogisticMatrixFactorization model on user-item interaction matrix `X` (n_users × n_items).
 Uses Hogwild!-style lock-free parallel SGD with per-interaction negative sampling.
 """
-function fit!(model::LMF{T}, X::SparseMatrixCSC{Tv,Ti};
+function fit!(model::LogisticMatrixFactorization{T}, X::SparseMatrixCSC{Tv,Ti};
               rng::AbstractRNG = Random.default_rng(),
               callbacks::Vector{<:AbstractCallback} = AbstractCallback[]) where {T,Tv,Ti}
     n_users, n_items = size(X)
@@ -85,7 +85,7 @@ function fit!(model::LMF{T}, X::SparseMatrixCSC{Tv,Ti};
     U = model.user_factors
     V = model.item_factors
 
-    # Build flat sampling structure (like BPR) — sample (user, pos_item) uniformly
+    # Build flat sampling structure (like BayesianPersonalizedRanking) — sample (user, pos_item) uniformly
     X_csr = to_csr(X)
     n_interactions = nnz(X)
 
@@ -200,12 +200,12 @@ function fit!(model::LMF{T}, X::SparseMatrixCSC{Tv,Ti};
         iter_seconds = (time_ns() - epoch_start) / 1e9
         total_seconds = elapsed_seconds(monitor)
         if model.verbose
-            log_iteration("LMF", epoch, model.max_iter, Float64(total_loss),
+            log_iteration("LogisticMatrixFactorization", epoch, model.max_iter, Float64(total_loss),
                          iter_seconds, total_seconds)
         end
 
         if record!(monitor, total_loss)
-            model.verbose && @info "[LMF] converged at iteration $epoch"
+            model.verbose && @info "[LogisticMatrixFactorization] converged at iteration $epoch"
             break
         end
 

@@ -1,5 +1,5 @@
 # benchmark/julia_huge_benchmark.jl
-# Aggressive huge-matrix benchmark for Gideon.jl WRMF
+# Aggressive huge-matrix benchmark for Gideon.jl WeightedMatrixFactorization
 # Compares Julia (multi-threaded) vs R rsparse across 5 scale levels
 #
 # Run from project root:
@@ -42,7 +42,7 @@ function bench_wrmf(X::SparseMatrixCSC, solver::ALSSolver;
                     n_runs::Int=1, rank::Int=10,
                     lambda=0.1, alpha=1.0, n_iter::Int=10)
     minimum(
-        @elapsed(fit!(WRMF(rank=rank, λ=lambda, α=alpha, max_iter=n_iter,
+        @elapsed(fit!(WeightedMatrixFactorization(rank=rank, λ=lambda, α=alpha, max_iter=n_iter,
                            solver=solver, feedback=IMPLICIT),
                       X; rng=MersenneTwister(42)))
         for _ in 1:n_runs
@@ -72,7 +72,7 @@ println()
 print("Warming up JIT... ")
 let X_w = make_sparse_matrix(300, 200, 0.1; seed=1)
     for s in (CHOLESKY, CONJUGATE_GRADIENT)
-        fit!(WRMF(rank=10, λ=0.1, α=1.0, max_iter=3, solver=s, feedback=IMPLICIT),
+        fit!(WeightedMatrixFactorization(rank=10, λ=0.1, α=1.0, max_iter=3, solver=s, feedback=IMPLICIT),
              X_w; rng=MersenneTwister(1))
     end
 end

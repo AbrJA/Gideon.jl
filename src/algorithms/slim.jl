@@ -1,21 +1,21 @@
 # ──────────────────────────────────────────────────────────────────────────────
-# SLIM — Sparse Linear Methods for Top-N Recommendations
+# SparseLinearModel — Sparse Linear Methods for Top-N Recommendations
 # ──────────────────────────────────────────────────────────────────────────────
 #
 # Reference: Ning & Karypis (2011)
-#   "SLIM: Sparse Linear Methods for Top-N Recommender Systems" (ICDM 2011)
+#   "SparseLinearModel: Sparse Linear Methods for Top-N Recommender Systems" (ICDM 2011)
 #
 # Learns a sparse item-item weight matrix W by solving, for each item j:
-#   min_wⱼ ½‖xⱼ - X·wⱼ‖² + λ₂/2‖wⱼ‖² + λ₁‖wⱼ‖₁
+#   min_wⱼ ½‖xⱼ - X·wⱼ‖² + λ_2/2‖wⱼ‖² + λ_1‖wⱼ‖₁
 #   subject to wⱼ ≥ 0, wⱼⱼ = 0
 #
 # This is coordinate descent on an elastic-net regression per item column.
 # ──────────────────────────────────────────────────────────────────────────────
 
 """
-    SLIM{T} <: AbstractSparseModel
+    SparseLinearModel{T} <: AbstractSparseModel
 
-Sparse Linear Methods (SLIM) for item-based collaborative filtering.
+Sparse Linear Methods (SparseLinearModel) for item-based collaborative filtering.
 
 Learns a sparse, non-negative item-item weight matrix using elastic net
 regularization (L1 + L2). The sparsity of W makes predictions efficient
@@ -23,19 +23,19 @@ and interpretable.
 
 # Constructor
 ```julia
-SLIM(; λ₁=0.01, λ₂=0.1, max_iter=50, convergence_tol=1e-4, verbose=true)
+SparseLinearModel(; λ_1=0.01, λ_2=0.1, max_iter=50, convergence_tol=1e-4, verbose=true)
 ```
 
 # Fields
-- `λ₁::T` — L1 penalty (sparsity)
-- `λ₂::T` — L2 penalty (shrinkage)
+- `λ_1::T` — L1 penalty (sparsity)
+- `λ_2::T` — L2 penalty (shrinkage)
 - `max_iter::Int` — max coordinate descent iterations per item
 - `convergence_tol::T` — convergence threshold for coordinate descent
 - `nonneg::Bool` — enforce non-negative weights (default: true)
 """
-mutable struct SLIM{T<:AbstractFloat} <: AbstractItemSimilarity
-    const λ₁::T
-    const λ₂::T
+mutable struct SparseLinearModel{T<:AbstractFloat} <: AbstractItemSimilarity
+    const λ_1::T
+    const λ_2::T
     const max_iter::Int
     const convergence_tol::T
     const nonneg::Bool
@@ -44,18 +44,18 @@ mutable struct SLIM{T<:AbstractFloat} <: AbstractItemSimilarity
     is_fitted::Bool
 end
 
-function SLIM(;
-    λ₁::Float64 = 0.01,
-    λ₂::Float64 = 0.1,
+function SparseLinearModel(;
+    λ_1::Float64 = 0.01,
+    λ_2::Float64 = 0.1,
     max_iter::Int = 50,
     convergence_tol::Float64 = 1e-4,
     nonneg::Bool = true,
     verbose::Bool = true,
 )
-    λ₁ >= 0.0 || throw(ArgumentError("λ₁ must be non-negative, got $λ₁"))
-    λ₂ >= 0.0 || throw(ArgumentError("λ₂ must be non-negative, got $λ₂"))
+    λ_1 >= 0.0 || throw(ArgumentError("λ_1 must be non-negative, got $λ_1"))
+    λ_2 >= 0.0 || throw(ArgumentError("λ_2 must be non-negative, got $λ_2"))
     T = Float64
-    SLIM{T}(λ₁, λ₂, max_iter, convergence_tol, nonneg, verbose,
+    SparseLinearModel{T}(λ_1, λ_2, max_iter, convergence_tol, nonneg, verbose,
             spzeros(T, 0, 0), false)
 end
 
@@ -64,12 +64,12 @@ end
 # ──────────────────────────────────────────────────────────────────────────────
 
 """
-    fit!(model::SLIM, X) -> model
+    fit!(model::SparseLinearModel, X) -> model
 
-Fit SLIM on interaction matrix `X` (users × items).
+Fit SparseLinearModel on interaction matrix `X` (users × items).
 Solves n_items independent elastic net problems via coordinate descent.
 """
-function fit!(model::SLIM{T}, X::SparseMatrixCSC{Tv,Ti};
+function fit!(model::SparseLinearModel{T}, X::SparseMatrixCSC{Tv,Ti};
               rng::AbstractRNG=Random.default_rng()) where {T,Tv,Ti}
     n_users, n_items = size(X)
 
@@ -77,7 +77,7 @@ function fit!(model::SLIM{T}, X::SparseMatrixCSC{Tv,Ti};
     G = Matrix{T}(X' * X)   # n_items × n_items
     diag_G = [G[j, j] for j in 1:n_items]
 
-    model.verbose && @info "[SLIM] Fitting $(n_items) items via coordinate descent..."
+    model.verbose && @info "[SparseLinearModel] Fitting $(n_items) items via coordinate descent..."
 
     # Solve per-column elastic net problems in parallel
     W_cols = Vector{SparseVector{T,Int}}(undef, n_items)
@@ -92,7 +92,7 @@ function fit!(model::SLIM{T}, X::SparseMatrixCSC{Tv,Ti};
 
     nnz_w = nnz(model.W)
     density = nnz_w / (n_items * n_items) * 100
-    model.verbose && @info "[SLIM] Done. W: $(n_items)×$(n_items), nnz=$(nnz_w) ($(round(density, digits=3))%)"
+    model.verbose && @info "[SparseLinearModel] Done. W: $(n_items)×$(n_items), nnz=$(nnz_w) ($(round(density, digits=3))%)"
     model
 end
 
@@ -100,9 +100,9 @@ end
 Fit one column of W using coordinate descent for elastic net.
 """
 function _slim_fit_column(G::Matrix{T}, diag_G::Vector{T},
-                          j::Int, n_items::Int, model::SLIM{T}) where {T}
-    λ₁ = model.λ₁
-    λ₂ = model.λ₂
+                          j::Int, n_items::Int, model::SparseLinearModel{T}) where {T}
+    λ_1 = model.λ_1
+    λ_2 = model.λ_2
     max_iter = model.max_iter
     tol = model.convergence_tol
     nonneg = model.nonneg
@@ -126,12 +126,12 @@ function _slim_fit_column(G::Matrix{T}, diag_G::Vector{T},
             numerator = residual[i] + diag_G[i] * w[i]
 
             # Elastic net update with soft-thresholding
-            denom = diag_G[i] + λ₂
+            denom = diag_G[i] + λ_2
 
             if nonneg
-                new_w = max(zero(T), (numerator - λ₁)) / denom
+                new_w = max(zero(T), (numerator - λ_1)) / denom
             else
-                new_w = _soft_threshold(numerator, λ₁) / denom
+                new_w = _soft_threshold(numerator, λ_1) / denom
             end
 
             # Update residual incrementally: Δw = new_w - w[i]
@@ -171,11 +171,11 @@ end
 # ──────────────────────────────────────────────────────────────────────────────
 
 """
-    recommend(model::SLIM, X; k=10) -> Matrix{Int}
+    recommend(model::SparseLinearModel, X; k=10) -> Matrix{Int}
 
 Return top-k item indices per user. Scores = X * W, excluding seen items.
 """
-function recommend(model::SLIM{T}, X::SparseMatrixCSC; k::Int=10) where {T}
+function recommend(model::SparseLinearModel{T}, X::SparseMatrixCSC; k::Int=10) where {T}
     model.is_fitted || error("Model not fitted")
     n_users = size(X, 1)
     n_items = size(model.W, 1)
@@ -222,11 +222,11 @@ function recommend(model::SLIM{T}, X::SparseMatrixCSC; k::Int=10) where {T}
 end
 
 """
-    score(model::SLIM, X) -> SparseMatrixCSC
+    score(model::SparseLinearModel, X) -> SparseMatrixCSC
 
 Return sparse score matrix S = X * W.
 """
-function score(model::SLIM{T}, X::SparseMatrixCSC) where {T}
+function score(model::SparseLinearModel{T}, X::SparseMatrixCSC) where {T}
     model.is_fitted || error("Model not fitted")
     X * model.W
 end

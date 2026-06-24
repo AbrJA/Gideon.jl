@@ -4,7 +4,7 @@
     rng = MersenneTwister(42)
     X = sprand(rng, 50, 30, 0.1)
 
-    model = EALS(rank=8, λ=0.01, w0=1.0, max_iter=10, verbose=false)
+    model = ElementwiseALS(rank=8, λ=0.01, w0=1.0, max_iter=10, verbose=false)
     fit!(model, X; rng=MersenneTwister(1))
 
     @test model.is_fitted
@@ -18,28 +18,28 @@ end
     rng = MersenneTwister(42)
     X = sprand(rng, 50, 30, 0.1)
 
-    model = EALS(rank=8, λ=0.01, w0=1.0, max_iter=5, verbose=false)
+    model = ElementwiseALS(rank=8, λ=0.01, w0=1.0, max_iter=5, verbose=false)
     fit!(model, X; rng=MersenneTwister(1))
 
     preds = recommend(model, X; k=5)
     @test size(preds) == (50, 5)
     @test all(p -> 1 <= p <= 30, preds)
 
-    # predict_scores
+    # score
     scores = score(model, X)
     @test size(scores) == (50, 30)
     @test !any(isnan, scores)
 end
 
-@testset "eALS partial_fit!" begin
+@testset "eALS update!" begin
     rng = MersenneTwister(42)
     X = sprand(rng, 50, 30, 0.1)
 
-    model = EALS(rank=4, λ=0.01, w0=1.0, max_iter=3, verbose=false)
+    model = ElementwiseALS(rank=4, λ=0.01, w0=1.0, max_iter=3, verbose=false)
     fit!(model, X; rng=MersenneTwister(1))
 
     # Incremental update
-    partial_fit!(model, X; n_iter=2)
+    update!(model, X; n_iter=2)
     @test model.is_fitted
     @test !any(isnan, model.user_factors)
 end
@@ -48,7 +48,7 @@ end
     rng = MersenneTwister(42)
     X = sprand(rng, 50, 30, 0.1)
 
-    model = EALS(rank=4, λ=0.01, w0=5.0, popularity_exponent=0.75, max_iter=3, verbose=false)
+    model = ElementwiseALS(rank=4, λ=0.01, w0=5.0, popularity_exponent=0.75, max_iter=3, verbose=false)
     fit!(model, X; rng=MersenneTwister(1))
 
     @test length(model.item_weights) == 30
@@ -62,7 +62,7 @@ end
     U_init = randn(rng, 4, 30) .* 0.01
     V_init = randn(rng, 4, 20) .* 0.01
 
-    model = EALS(rank=4, max_iter=3, verbose=false)
+    model = ElementwiseALS(rank=4, max_iter=3, verbose=false)
     fit!(model, X; U_init=U_init, V_init=V_init, rng=MersenneTwister(2))
     @test model.is_fitted
 end

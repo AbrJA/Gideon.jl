@@ -19,7 +19,7 @@ Gideon.jl is a pure-Julia port and enhancement of the R package [rsparse](https:
 
 - **Unified API** — `fit!` / `recommend` / `score` / `transform` for recommenders; `fit!` / `predict` for regression models.
 - **Production-grade performance** — zero-allocation inner loops, `@inbounds @simd` vectorization, BLAS-2 gram updates, per-thread pre-allocated buffers.
-- **GPU acceleration** — optional CUDA.jl extension for EASE, iALS, WRMF (via package extensions).
+- **GPU acceleration** — optional CUDA.jl extension for ShallowAutoencoder, iALS, WeightedMatrixFactorization (via package extensions).
 - **R-validated correctness** — the full test suite includes a Tier-2 fixture layer that compares numerically against pre-computed R / rsparse outputs.
 - **Sparse-native** — all algorithms operate directly on `SparseMatrixCSC`; no dense conversion needed.
 - **Precompilation** — `PrecompileTools.jl` workloads reduce time-to-first-execution.
@@ -34,17 +34,17 @@ Gideon.jl is a pure-Julia port and enhancement of the R package [rsparse](https:
 
 | Model | Type | Reference |
 |-------|------|-----------|
-| `WRMF` | Implicit / Explicit ALS (Cholesky, CG, NNLS) | Hu, Koren & Volinsky (2008) |
-| `IALS` | Implicit ALS with Gramian caching | Rendle et al. (2021) |
-| `EALS` | Element-wise ALS with popularity weighting | He et al. (2016) |
-| `BPR` | Bayesian Personalized Ranking (pairwise SGD) | Rendle et al. (2009) |
-| `LMF` | Logistic Matrix Factorization | Johnson (2014) |
-| `GloVe` | Co-occurrence embedding (Hogwild AdaGrad) | Pennington, Socher & Manning (2014) |
-| `EASE` | Embarrassingly Shallow Autoencoders | Steck (2019) |
-| `SLIM` | Sparse Linear Methods (elastic net) | Ning & Karypis (2011) |
-| `FTRL` | Follow The Regularized Leader (online GLM) | McMahan et al. (2013) |
+| `WeightedMatrixFactorization` | Implicit / Explicit ALS (Cholesky, CG, NNLS) | Hu, Koren & Volinsky (2008) |
+| `ImplicitALS` | Implicit ALS with Gramian caching | Rendle et al. (2021) |
+| `ElementwiseALS` | Element-wise ALS with popularity weighting | He et al. (2016) |
+| `BayesianPersonalizedRanking` | Bayesian Personalized Ranking (pairwise SGD) | Rendle et al. (2009) |
+| `LogisticMatrixFactorization` | Logistic Matrix Factorization | Johnson (2014) |
+| `GlobalVectors` | Co-occurrence embedding (Hogwild AdaGrad) | Pennington, Socher & Manning (2014) |
+| `ShallowAutoencoder` | Embarrassingly Shallow Autoencoders | Steck (2019) |
+| `SparseLinearModel` | Sparse Linear Methods (elastic net) | Ning & Karypis (2011) |
+| `OnlineRegressor` | Follow The Regularized Leader (online GLM) | McMahan et al. (2013) |
 | `FactorizationMachine` | 2nd-order FM (AdaGrad SGD) | Rendle (2010) |
-| `soft_impute` / `soft_svd` | Low-rank matrix completion | Hastie et al. (2014) |
+| `SoftImpute` | Low-rank matrix completion | Hastie et al. (2014) |
 
 ---
 
@@ -55,13 +55,13 @@ using Pkg
 Pkg.add(url="https://github.com/AbrJA/Gideon.jl")
 ```
 
-Requires Julia ≥ 1.9.
+Requires Julia ≥ 1.10.
 
 ---
 
 ## Quick Start
 
-### WRMF — Implicit Collaborative Filtering
+### WeightedMatrixFactorization — Implicit Collaborative Filtering
 
 ```julia
 using Gideon, SparseArrays, Random
@@ -71,7 +71,7 @@ rng = MersenneTwister(42)
 X = sprand(rng, 1000, 500, 0.02)   # 1 K users, 500 items, 2% density
 
 # Train with Conjugate-Gradient ALS (default, fastest at scale)
-model = WRMF(rank=20, λ=0.1, α=1.0, max_iter=15)
+model = WeightedMatrixFactorization(rank=20, λ=0.1, α=1.0, max_iter=15)
 fit!(model, X; rng)
 
 # User and item embeddings: rank × n matrix
@@ -86,13 +86,13 @@ U_new = transform(model, X_new)    # (20, 50)
 Switch to Cholesky for maximum numerical stability, or NNLS for non-negative factors:
 
 ```julia
-model_chol = WRMF(rank=20, λ=0.1, solver=CHOLESKY)
-model_nnls = WRMF(rank=20, λ=0.1, solver=NNLS)
+model_chol = WeightedMatrixFactorization(rank=20, λ=0.1, solver=CHOLESKY)
+model_nnls = WeightedMatrixFactorization(rank=20, λ=0.1, solver=NNLS)
 ```
 
 ---
 
-### GloVe — Co-occurrence Embeddings
+### GlobalVectors — Co-occurrence Embeddings
 
 ```julia
 using Gideon, SparseArrays, Random
@@ -101,23 +101,23 @@ using Gideon, SparseArrays, Random
 C = sprand(MersenneTwister(1), 5000, 5000, 0.005)
 C = C + C'   # symmetrize
 
-glove = GloVe(rank=100, learning_rate=0.05, x_max=100.0)
-fit!(glove, C; n_iter=20, rng=MersenneTwister(2))
+glove = GlobalVectors(rank=100, learning_rate=0.05, x_max=100.0, max_iter=20)
+fit!(glove, C; rng=MersenneTwister(2))
 
-# Final embeddings: average main + context vectors (standard GloVe convention)
-E = get_embeddings(glove)   # 100 × 5000
+# Final embeddings: average main + context vectors (standard GlobalVectors convention)
+E = embeddings(glove)   # 100 × 5000
 ```
 
 ---
 
-### Logistic Matrix Factorization (LMF)
+### Logistic Matrix Factorization (LogisticMatrixFactorization)
 
 ```julia
 using Gideon, SparseArrays, Random
 
 X = sprand(MersenneTwister(3), 800, 300, 0.03)
 
-lmf = LMF(rank=15, α=1.0, λ=0.1, learning_rate=0.01, max_iter=20, n_negative=5)
+lmf = LogisticMatrixFactorization(rank=15, α=1.0, λ=0.1, learning_rate=0.01, max_iter=20, n_negative=5)
 fit!(lmf, X; rng=MersenneTwister(3))
 
 size(lmf.user_factors)   # (15, 800)
@@ -126,9 +126,9 @@ size(lmf.item_factors)   # (15, 300)
 
 ---
 
-### FTRL — Online Logistic Regression
+### OnlineRegressor — Online Logistic Regression
 
-FTRL supports Elastic-Net regularization and streaming/online updates via `partial_fit!`.
+OnlineRegressor supports Elastic-Net regularization and streaming/online updates via `update!`.
 
 ```julia
 using Gideon, SparseArrays, Random
@@ -138,7 +138,7 @@ n, p = 10_000, 50_000
 X_train = sprand(rng, n, p, 0.001)
 y_train = rand(rng, Bool, n) .|> Float64
 
-model = FTRL(
+model = OnlineRegressor(
     learning_rate       = 0.1,
     learning_rate_decay = 0.5,
     λ                   = 1e-4,
@@ -146,7 +146,7 @@ model = FTRL(
 )
 
 # Single pass — call multiple times for multiple epochs
-partial_fit!(model, X_train, y_train; rng)
+update!(model, X_train, y_train; rng)
 
 # Predict probabilities
 ŷ = predict(model, X_train)   # Vector{Float64} ∈ (0, 1)
@@ -154,7 +154,7 @@ partial_fit!(model, X_train, y_train; rng)
 # Online update with a new mini-batch
 X_new = sprand(rng, 200, p, 0.001)
 y_new = rand(rng, Bool, 200) .|> Float64
-partial_fit!(model, X_new, y_new; rng)
+update!(model, X_new, y_new; rng)
 ```
 
 ---
@@ -177,7 +177,7 @@ fm = FactorizationMachine(
     family         = BINOMIAL,
 )
 
-partial_fit!(fm, X, y; rng)
+update!(fm, X, y; rng)
 ŷ = predict(fm, X)
 ```
 
@@ -192,14 +192,16 @@ rng = MersenneTwister(11)
 X_observed = sprand(rng, 200, 150, 0.3)   # only ~30% of entries observed
 
 # Complete the matrix up to rank 10, nuclear-norm penalty λ=0.5
-result = soft_impute(X_observed; rank=10, λ=0.5, n_iter=100)
+model = SoftImpute(rank=10, λ=0.5, max_iter=100)
+fit!(model, X_observed; rng=rng)
 
-# Low-rank approximation: result.U * Diagonal(result.d) * result.V'
-recon = result.U * Diagonal(result.d) * result.V'
+# Low-rank approximation: model.U * Diagonal(model.d) * model.V'
+recon = model.U * Diagonal(model.d) * model.V'
 size(recon)   # (200, 150)
 
-# Use soft_svd for a cleaner low-rank SVD (no imputation correction term)
-svd_result = soft_svd(X_observed; rank=5, n_iter=50)
+# Use target=:svd for a cleaner low-rank SVD (no imputation correction term)
+model_svd = SoftImpute(rank=5, max_iter=50, target=:svd)
+fit!(model_svd, X_observed; rng=rng)
 ```
 
 ---
@@ -253,16 +255,16 @@ Gideon.jl
 │   │   ├── eals.jl        # Element-wise ALS (popularity-weighted)
 │   │   ├── bpr.jl         # Bayesian Personalized Ranking (pairwise SGD)
 │   │   ├── lmf.jl         # Logistic MF with negative sampling
-│   │   ├── glove.jl       # GloVe Hogwild AdaGrad
-│   │   ├── ease.jl        # EASE (closed-form autoencoder)
-│   │   ├── slim.jl        # SLIM (elastic-net item-item)
+│   │   ├── glove.jl       # GlobalVectors Hogwild AdaGrad
+│   │   ├── ease.jl        # ShallowAutoencoder (closed-form autoencoder)
+│   │   ├── slim.jl        # SparseLinearModel (elastic-net item-item)
 │   │   ├── ftrl.jl        # Follow The Regularized Leader (online)
 │   │   ├── fm.jl          # Factorization Machines
-│   │   └── soft_impute.jl # SoftImpute / SoftSVD
+│   │   └── soft_impute.jl # SoftImpute (nuclear-norm matrix completion)
 │   └── metrics/
 │       └── ranking.jl     # AP@K, MAP@K, NDCG@K, Precision@K, Recall@K
 ├── ext/
-│   └── GideonCUDAExt.jl   # GPU acceleration (EASE, iALS, WRMF, predict)
+│   └── GideonCUDAExt.jl   # GPU acceleration (ShallowAutoencoder, iALS, WeightedMatrixFactorization, predict)
 └── test/
     ├── runtests.jl
     └── r_correctness.jl   # Numerical validation against R / rsparse
@@ -273,9 +275,9 @@ Gideon.jl
 ```julia
 AbstractSparseModel
 ├── AbstractRecommender
-│   ├── AbstractMatrixFactorization   →  WRMF, IALS, EALS, LMF, BPR, GloVe
-│   └── AbstractItemSimilarity        →  EASE, SLIM
-└── AbstractSparseRegression      →  FTRL, FactorizationMachine
+│   ├── AbstractMatrixFactorization   →  WeightedMatrixFactorization, ImplicitALS, ElementwiseALS, LogisticMatrixFactorization, BayesianPersonalizedRanking, GlobalVectors
+│   └── AbstractItemSimilarity        →  ShallowAutoencoder, SparseLinearModel
+└── AbstractSparseRegression      →  OnlineRegressor, FactorizationMachine
 ```
 
 Recommender models implement a shared interface via default methods on
@@ -284,16 +286,16 @@ Recommender models implement a shared interface via default methods on
 | Function | Description |
 |----------|-------------|
 | `fit!(model, X)` | Train in-place on sparse matrix `X` |
-| `partial_fit!(model, X, y)` | Online/incremental update (FTRL, FM, eALS) |
+| `update!(model, X, y)` | Online/incremental update (OnlineRegressor, FM, eALS) |
 | `recommend(model, X; k)` | Return top-k item indices per user (seen items masked) |
 | `score(model, X)` | Return full user×item score matrix |
 | `score(model, users, items)` | Return scores for specific (user, item) pairs |
 | `transform(model, X)` | Return latent embeddings for new users |
 | `similar_items(model, id; k)` | Find k nearest items by cosine similarity |
 | `similar_users(model, id; k)` | Find k nearest users by cosine similarity |
-| `coef(model)` | Return learned weight vector (FTRL) |
+| `coef(model)` | Return learned weight vector (OnlineRegressor) |
 
-Regression models (FTRL, FM) use `predict(model, X)` instead of `recommend`/`score`.
+Regression models (OnlineRegressor, FM) use `predict(model, X)` instead of `recommend`/`score`.
 
 ---
 
@@ -304,16 +306,16 @@ With [CUDA.jl](https://github.com/JuliaGPU/CUDA.jl) installed, Gideon loads a pa
 ```julia
 using Gideon, CUDA
 
-# GPU-accelerated EASE (fully on GPU)
-fit_gpu!(model::EASE, X)
+# GPU-accelerated ShallowAutoencoder (fully on GPU)
+fit_gpu!(model::ShallowAutoencoder, X)
 
-# GPU-accelerated iALS/WRMF (Gramian on GPU, solve on CPU)
-fit_gpu!(model::IALS, X)
-fit_gpu!(model::WRMF, X)
+# GPU-accelerated iALS/WeightedMatrixFactorization (Gramian on GPU, solve on CPU)
+fit_gpu!(model::ImplicitALS, X)
+fit_gpu!(model::WeightedMatrixFactorization, X)
 
 # Score computation on GPU for any matrix factorization model
-predict_scores_gpu(model, X)
-predict_gpu(model, X; k=10)
+score_gpu(model, X)
+recommend_gpu(model, X; k=10)
 ```
 
 ---
@@ -351,7 +353,7 @@ X_train, X_test = temporal_split(X; test_fraction=0.2)
 
 # Grid search over hyperparameters
 best_params, best_score, results = grid_search(
-    p -> WRMF(rank=p.rank, λ=p.λ, α=40.0, max_iter=10, verbose=false),
+    p -> WeightedMatrixFactorization(rank=p.rank, λ=p.λ, α=40.0, max_iter=10, verbose=false),
     X,
     Dict(:rank => [16, 32, 64], :λ => [0.01, 0.1, 1.0]);
     k=10, metric=ndcg_at_k
@@ -359,7 +361,7 @@ best_params, best_score, results = grid_search(
 
 # Random search with budget
 best_params, best_score, _ = random_search(
-    p -> WRMF(rank=p.rank, λ=p.λ, α=40.0, max_iter=10, verbose=false),
+    p -> WeightedMatrixFactorization(rank=p.rank, λ=p.λ, α=40.0, max_iter=10, verbose=false),
     X,
     Dict(:rank => rng -> rand(rng, [16, 32, 64, 128]),
          :λ   => rng -> 10.0^(rand(rng)*3 - 2));
@@ -373,19 +375,19 @@ best_params, best_score, _ = random_search(
 
 | Technique | Where used |
 |-----------|-----------|
-| Pre-allocated per-thread Gram / RHS / Cholesky buffers | WRMF ALS sweep |
-| `BLAS.syr!` rank-1 Gram accumulation | WRMF Cholesky solver |
-| `BLAS.syrk!` item Gram `YᵀY` | WRMF, iALS |
-| Fast-path manual SIMD dot (`@inbounds @simd`) for sparse users with < 32 nnz | WRMF CG `_implicit_matvec!` |
-| `@inbounds @simd` vectorized dot / gradient loops | WRMF, LMF, GloVe, BPR, eALS |
+| Pre-allocated per-thread Gram / RHS / Cholesky buffers | WeightedMatrixFactorization ALS sweep |
+| `BLAS.syr!` rank-1 Gram accumulation | WeightedMatrixFactorization Cholesky solver |
+| `BLAS.syrk!` item Gram `YᵀY` | WeightedMatrixFactorization, iALS |
+| Fast-path manual SIMD dot (`@inbounds @simd`) for sparse users with < 32 nnz | WeightedMatrixFactorization CG `_implicit_matvec!` |
+| `@inbounds @simd` vectorized dot / gradient loops | WeightedMatrixFactorization, LogisticMatrixFactorization, GlobalVectors, BayesianPersonalizedRanking, eALS |
 | CSR dual storage for O(nnz_u) per-user row access | All algorithms, metrics |
-| `Threads.@threads :static` outer loops | WRMF, iALS, eALS, BPR user/item sweeps |
+| `Threads.@threads :static` outer loops | WeightedMatrixFactorization, iALS, eALS, BayesianPersonalizedRanking user/item sweeps |
 | Element-wise coordinate descent O(d) per update | eALS |
 | Gramian caching (avoids per-user recomputation) | iALS, eALS |
-| Zero-allocation Fisher-Yates shuffle | GloVe epoch shuffling |
-| Numerical stability (epsilon floors in AdaGrad) | GloVe, FM |
+| Zero-allocation Fisher-Yates shuffle | GlobalVectors epoch shuffling |
+| Numerical stability (epsilon floors in AdaGrad) | GlobalVectors, FM |
 | PrecompileTools workloads | All algorithms (reduces TTFX) |
-| Optional GPU offloading via CUDA.jl extension | EASE, iALS, WRMF, predict |
+| Optional GPU offloading via CUDA.jl extension | ShallowAutoencoder, iALS, WeightedMatrixFactorization, predict |
 
 ---
 
@@ -400,7 +402,7 @@ The suite runs **796 tests** covering:
 - Unit correctness (dimensions, NaN / Inf guards, convergence monotonicity)
 - R / rsparse numerical fixture comparisons (weights, predictions, loss values)
 - Static analysis via [Aqua.jl](https://github.com/JuliaTesting/Aqua.jl) and [JET.jl](https://github.com/aviatesk/JET.jl)
-- All algorithms: WRMF, iALS, eALS, BPR, LMF, GloVe, EASE, SLIM, FTRL, FM, SoftImpute
+- All algorithms: WeightedMatrixFactorization, iALS, eALS, BayesianPersonalizedRanking, LogisticMatrixFactorization, GlobalVectors, ShallowAutoencoder, SparseLinearModel, OnlineRegressor, FM, SoftImpute
 - Infrastructure: serialization, cross-validation, callbacks, Tables.jl integration
 - GPU stubs (full GPU tests when CUDA available)
 
