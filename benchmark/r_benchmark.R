@@ -132,7 +132,7 @@ x_xor <- matrix(c(0,0, 0,1, 1,0, 1,1), nrow=4, byrow=TRUE)
 x_xor <- as(x_xor, "RsparseMatrix")
 y_xor  <- c(0, 1, 1, 0)
 
-fm <- FactorizationMachine$new(learning_rate_w=10, rank=2, lambda_w=0,
+fm <- FM$new(learning_rate_w=10, rank=2, lambda_w=0,
                                lambda_v=0, family='binomial', intercept=TRUE,
                                learning_rate_v=10)
 t0 <- proc.time()

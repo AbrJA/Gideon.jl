@@ -1,5 +1,5 @@
 # ──────────────────────────────────────────────────────────────────────────────
-# WeightedMatrixFactorization — Weighted Regularized Matrix Factorization (Implicit ALS)
+# WMF — Weighted Regularized Matrix Factorization (Implicit ALS)
 # ──────────────────────────────────────────────────────────────────────────────
 #
 # Reference: Hu, Koren, Volinsky (2008)
@@ -21,7 +21,7 @@
 # ──────────────────────────────────────────────────────────────────────────────
 
 """
-    WeightedMatrixFactorization{T} <: AbstractMatrixFactorization
+    WMF{T} <: AbstractMatrixFactorization
 
 Weighted Regularized Matrix Factorization via Alternating Least Squares.
 
@@ -31,7 +31,7 @@ and NonNegative (non-negative matrix factorization).
 
 # Constructor
 ```julia
-WeightedMatrixFactorization(; rank=10, λ=0.1, α=1.0, max_iter=10, convergence_tol=0.005,
+WMF(; rank=10, λ=0.1, α=1.0, max_iter=10, convergence_tol=0.005,
        solver=ConjugateGradient(), cg_steps=3, feedback=IMPLICIT, verbose=true)
 ```
 
@@ -52,12 +52,12 @@ WeightedMatrixFactorization(; rank=10, λ=0.1, α=1.0, max_iter=10, convergence_
 using SparseArrays, Gideon
 
 X = sprand(1000, 500, 0.01)
-model = WeightedMatrixFactorization(rank=64, λ=0.1, α=40.0, max_iter=15, solver=ConjugateGradient())
+model = WMF(rank=64, λ=0.1, α=40.0, max_iter=15, solver=ConjugateGradient())
 fit!(model, X)
 recommendations = recommend(model, X; k=10)
 ```
 """
-mutable struct WeightedMatrixFactorization{T<:AbstractFloat} <: AbstractMatrixFactorization
+mutable struct WMF{T<:AbstractFloat} <: AbstractMatrixFactorization
     const rank::Int
     const λ::T
     const α::T
@@ -72,7 +72,7 @@ mutable struct WeightedMatrixFactorization{T<:AbstractFloat} <: AbstractMatrixFa
     is_fitted::Bool
 end
 
-function WeightedMatrixFactorization(;
+function WMF(;
     rank::Int = 10,
     λ::Float64 = 0.1,
     α::Float64 = 1.0,
@@ -90,7 +90,7 @@ function WeightedMatrixFactorization(;
     max_iter >= 1 || throw(ArgumentError("max_iter must be ≥ 1, got $max_iter"))
     cg_steps >= 1 || throw(ArgumentError("cg_steps must be ≥ 1, got $cg_steps"))
     T = dtype
-    WeightedMatrixFactorization{T}(
+    WMF{T}(
         rank, T(λ), T(α), max_iter, T(convergence_tol), solver, cg_steps, feedback, verbose,
         Matrix{T}(undef, 0, 0),
         Matrix{T}(undef, 0, 0),
@@ -103,16 +103,16 @@ end
 # ──────────────────────────────────────────────────────────────────────────────
 
 """
-    fit!(model::WeightedMatrixFactorization, X::SparseMatrixCSC; rng, U_init, V_init) -> model
+    fit!(model::WMF, X::SparseMatrixCSC; rng, U_init, V_init) -> model
 
-Fit the WeightedMatrixFactorization model on user-item sparse matrix `X` (n_users × n_items).
+Fit the WMF model on user-item sparse matrix `X` (n_users × n_items).
 
 # Keyword Arguments
 - `rng::AbstractRNG = Random.default_rng()` — random number generator
 - `U_init::Union{Nothing, Matrix}` — warm-start user factors (rank × n_users)
 - `V_init::Union{Nothing, Matrix}` — warm-start item factors (rank × n_items)
 """
-function fit!(model::WeightedMatrixFactorization{T}, X::SparseMatrixCSC{Tv,Ti};
+function fit!(model::WMF{T}, X::SparseMatrixCSC{Tv,Ti};
               rng::AbstractRNG = Random.default_rng(),
               U_init::Union{Nothing, Matrix{T}} = nothing,
               V_init::Union{Nothing, Matrix{T}} = nothing,
@@ -142,12 +142,12 @@ function fit!(model::WeightedMatrixFactorization{T}, X::SparseMatrixCSC{Tv,Ti};
         total_seconds = elapsed_seconds(monitor)
 
         if model.verbose
-            log_iteration("WeightedMatrixFactorization", iter, model.max_iter, Float64(loss),
+            log_iteration("WMF", iter, model.max_iter, Float64(loss),
                          iter_seconds, total_seconds)
         end
 
         if record!(monitor, loss)
-            model.verbose && @info "[WeightedMatrixFactorization] converged at iteration $iter"
+            model.verbose && @info "[WMF] converged at iteration $iter"
             break
         end
 
@@ -165,7 +165,7 @@ end
 # ──────────────────────────────────────────────────────────────────────────────
 
 function _als_sweep!(
-    model::WeightedMatrixFactorization{T},
+    model::WMF{T},
     A::SparseMatrixCSC,
     factors::Matrix{T},
     fixed::Matrix{T},
@@ -182,7 +182,7 @@ _als_sweep!(::Union{CholeskySolver, NonNegative}, model, A, factors, fixed, n_en
 # ──────────────── CholeskySolver path ────────────────
 
 function _als_sweep_cholesky!(
-    model::WeightedMatrixFactorization{T},
+    model::WMF{T},
     A::SparseMatrixCSC,
     factors::Matrix{T},
     fixed::Matrix{T},
@@ -293,7 +293,7 @@ end
 # ──────────────── Conjugate Gradient path ────────────────
 
 function _als_sweep_cg!(
-    model::WeightedMatrixFactorization{T},
+    model::WMF{T},
     A::SparseMatrixCSC,
     factors::Matrix{T},
     fixed::Matrix{T},
@@ -441,7 +441,7 @@ end
 # Loss computation
 # ──────────────────────────────────────────────────────────────────────────────
 
-function _compute_loss(model::WeightedMatrixFactorization{T}, X::SparseMatrixCSC) where {T}
+function _compute_loss(model::WMF{T}, X::SparseMatrixCSC) where {T}
     U = model.user_factors
     V = model.item_factors
     λ = model.λ
@@ -478,12 +478,12 @@ end
 # ──────────────────────────────────────────────────────────────────────────────
 
 """
-    transform(model::WeightedMatrixFactorization, X::SparseMatrixCSC) -> Matrix
+    transform(model::WMF, X::SparseMatrixCSC) -> Matrix
 
 Compute user embeddings for new users given their interaction matrix `X` (n_new × n_items).
 Returns a `rank × n_new` factor matrix.
 """
-function transform(model::WeightedMatrixFactorization{T}, X::SparseMatrixCSC) where {T}
+function transform(model::WMF{T}, X::SparseMatrixCSC) where {T}
     model.is_fitted || error("Model not fitted. Call fit! first.")
     n_users_new = size(X, 1)
     k = model.rank
@@ -496,12 +496,12 @@ function transform(model::WeightedMatrixFactorization{T}, X::SparseMatrixCSC) wh
 end
 
 """
-    recommend(model::WeightedMatrixFactorization, X::SparseMatrixCSC; k=10) -> Matrix{Int}
+    recommend(model::WMF, X::SparseMatrixCSC; k=10) -> Matrix{Int}
 
 Return top-k item indices for each user. Returns `n_users × k` matrix.
 Processes users in batches to avoid allocating the full score matrix.
 """
-function recommend(model::WeightedMatrixFactorization{T}, X::SparseMatrixCSC; k::Int = 10) where {T}
+function recommend(model::WMF{T}, X::SparseMatrixCSC; k::Int = 10) where {T}
     model.is_fitted || error("Model not fitted. Call fit! first.")
 
     # Use cached user factors if dimensions match (training data), else re-embed
@@ -515,23 +515,23 @@ function recommend(model::WeightedMatrixFactorization{T}, X::SparseMatrixCSC; k:
 end
 
 """
-    score(model::WeightedMatrixFactorization, X) -> Matrix
+    score(model::WMF, X) -> Matrix
 
 Return the full score matrix (n_users × n_items) without top-k filtering.
 Uses `transform` to embed users, then computes inner products with item factors.
 """
-function score(model::WeightedMatrixFactorization{T}, X::SparseMatrixCSC) where {T}
+function score(model::WMF{T}, X::SparseMatrixCSC) where {T}
     model.is_fitted || error("Model not fitted. Call fit! first.")
     user_emb = transform(model, X)
     user_emb' * model.item_factors
 end
 
 """
-    score(model::WeightedMatrixFactorization, user_indices, item_indices) -> Vector
+    score(model::WMF, user_indices, item_indices) -> Vector
 
 Return raw scores for specific (user, item) pairs using pre-fitted factors.
 """
-function score(model::WeightedMatrixFactorization{T}, user_indices::AbstractVector{<:Integer},
+function score(model::WMF{T}, user_indices::AbstractVector{<:Integer},
               item_indices::AbstractVector{<:Integer}) where {T}
     model.is_fitted || error("Model not fitted. Call fit! first.")
     _predict_pairwise_scores(model.user_factors, model.item_factors, user_indices, item_indices)

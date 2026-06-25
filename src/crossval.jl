@@ -79,7 +79,7 @@ K-fold cross-validation for recommendation models.
 # Example
 ```julia
 mean_map, std_map, scores = crossval(
-    () -> WeightedMatrixFactorization(rank=10, λ=0.1, α=40.0, max_iter=10, verbose=false),
+    () -> WMF(rank=10, λ=0.1, α=40.0, max_iter=10, verbose=false),
     X; n_folds=5, k=10, metric=map_at_k
 )
 ```
@@ -127,7 +127,7 @@ Grid search over hyperparameters with train/test split.
 # Example
 ```julia
 best, score, results = grid_search(
-    p -> WeightedMatrixFactorization(rank=p.rank, λ=p.λ, α=40.0, max_iter=10, verbose=false),
+    p -> WMF(rank=p.rank, λ=p.λ, α=40.0, max_iter=10, verbose=false),
     X,
     Dict(:rank => [10, 20, 50], :λ => [0.01, 0.1, 1.0]);
     k=10
@@ -191,7 +191,7 @@ Random search over hyperparameters.
 # Example
 ```julia
 best, score, _ = random_search(
-    p -> WeightedMatrixFactorization(rank=p.rank, λ=p.λ, α=40.0, max_iter=10, verbose=false),
+    p -> WMF(rank=p.rank, λ=p.λ, α=40.0, max_iter=10, verbose=false),
     X,
     Dict(:rank => rng -> rand(rng, [10,20,50,100]),
          :λ => rng -> 10.0^(rand(rng)*3 - 2));  # log-uniform [0.01, 10]

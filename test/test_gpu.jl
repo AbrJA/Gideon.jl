@@ -19,11 +19,11 @@ catch
 end
 
 if HAS_CUDA
-    @testset "GPU ShallowAutoencoder" begin
+    @testset "GPU EASE" begin
         rng = MersenneTwister(42)
         X = sprand(rng, 50, 30, 0.1)
 
-        model = ShallowAutoencoder(λ=100.0, verbose=false)
+        model = EASE(λ=100.0, verbose=false)
         fit_gpu!(model, X)
 
         @test model.is_fitted
@@ -31,16 +31,16 @@ if HAS_CUDA
         @test !any(isnan, model.B)
 
         # Compare with CPU result
-        model_cpu = ShallowAutoencoder(λ=100.0, verbose=false)
+        model_cpu = EASE(λ=100.0, verbose=false)
         fit!(model_cpu, X)
         @test model.B ≈ model_cpu.B atol=1e-4
     end
 
-    @testset "GPU iALS" begin
+    @testset "GPU IALS" begin
         rng = MersenneTwister(42)
         X = sprand(rng, 50, 30, 0.1)
 
-        model = ImplicitALS(rank=8, max_iter=3, verbose=false)
+        model = IALS(rank=8, max_iter=3, verbose=false)
         fit_gpu!(model, X; rng=MersenneTwister(1))
 
         @test model.is_fitted
@@ -52,7 +52,7 @@ if HAS_CUDA
         rng = MersenneTwister(42)
         X = sprand(rng, 30, 20, 0.1)
 
-        model = ImplicitALS(rank=4, max_iter=3, verbose=false)
+        model = IALS(rank=4, max_iter=3, verbose=false)
         fit!(model, X; rng=MersenneTwister(1))
 
         scores_gpu = score_gpu(model, X)
@@ -66,7 +66,7 @@ if HAS_CUDA
         rng = MersenneTwister(42)
         X = sprand(rng, 30, 20, 0.1)
 
-        model = ImplicitALS(rank=4, max_iter=3, verbose=false)
+        model = IALS(rank=4, max_iter=3, verbose=false)
         fit!(model, X; rng=MersenneTwister(1))
 
         preds = recommend_gpu(model, X; k=5)

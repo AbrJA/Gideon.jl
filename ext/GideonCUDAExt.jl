@@ -4,9 +4,9 @@
 #
 # This extension is loaded automatically when CUDA.jl is available.
 # It provides GPU-accelerated versions of key operations:
-# - ShallowAutoencoder: Sparse Gramian computation via cuSPARSE + dense inverse on GPU
-# - iALS: GPU Gramian caching with pre-allocated per-thread CPU solves
-# - WeightedMatrixFactorization: GPU Gramian (cuBLAS syrk) with per-thread CPU ALS solves
+# - EASE: Sparse Gramian computation via cuSPARSE + dense inverse on GPU
+# - IALS: GPU Gramian caching with pre-allocated per-thread CPU solves
+# - WMF: GPU Gramian (cuBLAS syrk) with per-thread CPU ALS solves
 # - Score computation: Batch user-item scoring on GPU
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -77,27 +77,27 @@ Estimate GPU memory required for n_floats of type T in bytes.
 _estimate_gpu_memory(n_floats::Int, ::Type{T}) where T = n_floats * sizeof(T)
 
 # ──────────────────────────────────────────────────────────────────────────────
-# GPU-accelerated ShallowAutoencoder
+# GPU-accelerated EASE
 # ──────────────────────────────────────────────────────────────────────────────
 
 """
-    fit_gpu!(model::ShallowAutoencoder, X) -> model
+    fit_gpu!(model::EASE, X) -> model
 
-GPU-accelerated ShallowAutoencoder fitting. Uses cuSPARSE for the sparse Gramian XᵀX
+GPU-accelerated EASE fitting. Uses cuSPARSE for the sparse Gramian XᵀX
 and cuSOLVER for the Cholesky inverse, keeping all heavy computation on GPU.
 Falls back to CPU if insufficient GPU memory.
 """
-function Gideon.fit_gpu!(model::Gideon.ShallowAutoencoder{T}, X::SparseMatrixCSC{Tv,Ti}) where {T,Tv,Ti}
+function Gideon.fit_gpu!(model::Gideon.EASE{T}, X::SparseMatrixCSC{Tv,Ti}) where {T,Tv,Ti}
     n_users, n_items = size(X)
 
-    model.verbose && @info "[ShallowAutoencoder-GPU] Computing Gramian via cuSPARSE ($(n_items) items)..."
+    model.verbose && @info "[EASE-GPU] Computing Gramian via cuSPARSE ($(n_items) items)..."
 
     # Memory check: need ~3 dense n_items×n_items matrices on GPU
     free_mem = CUDA.free_memory()
     estimated_mem = _estimate_gpu_memory(n_items * n_items * 3, T)
 
     if estimated_mem > free_mem * 0.8
-        @warn "[ShallowAutoencoder-GPU] Insufficient GPU memory (need ~$(estimated_mem ÷ 1_000_000)MB, " *
+        @warn "[EASE-GPU] Insufficient GPU memory (need ~$(estimated_mem ÷ 1_000_000)MB, " *
               "have ~$(free_mem ÷ 1_000_000)MB), falling back to CPU"
         Gideon.fit!(model, X)
         return model
@@ -115,7 +115,7 @@ function Gideon.fit_gpu!(model::Gideon.ShallowAutoencoder{T}, X::SparseMatrixCSC
     # Add regularization: G += λI
     _gpu_add_to_diag!(G_gpu, model.λ)
 
-    model.verbose && @info "[ShallowAutoencoder-GPU] Computing Cholesky inverse on GPU ($(n_items)×$(n_items))..."
+    model.verbose && @info "[EASE-GPU] Computing Cholesky inverse on GPU ($(n_items)×$(n_items))..."
 
     # Cholesky factorization and inversion on GPU
     C_gpu = cholesky(Symmetric(G_gpu))
@@ -137,21 +137,21 @@ function Gideon.fit_gpu!(model::Gideon.ShallowAutoencoder{T}, X::SparseMatrixCSC
     CUDA.reclaim()
 
     model.is_fitted = true
-    model.verbose && @info "[ShallowAutoencoder-GPU] Done. B matrix: $(n_items)×$(n_items)"
+    model.verbose && @info "[EASE-GPU] Done. B matrix: $(n_items)×$(n_items)"
     model
 end
 
 # ──────────────────────────────────────────────────────────────────────────────
-# GPU-accelerated iALS
+# GPU-accelerated IALS
 # ──────────────────────────────────────────────────────────────────────────────
 
 """
-    fit_gpu!(model::ImplicitALS, X; rng) -> model
+    fit_gpu!(model::IALS, X; rng) -> model
 
-GPU-accelerated iALS. Uses cuBLAS syrk for Gramian computation (V*Vᵀ and U*Uᵀ),
+GPU-accelerated IALS. Uses cuBLAS syrk for Gramian computation (V*Vᵀ and U*Uᵀ),
 with pre-allocated per-thread buffers for the CPU-side per-user Cholesky solves.
 """
-function Gideon.fit_gpu!(model::Gideon.ImplicitALS{T}, X::SparseMatrixCSC{Tv,Ti};
+function Gideon.fit_gpu!(model::Gideon.IALS{T}, X::SparseMatrixCSC{Tv,Ti};
                          rng::Random.AbstractRNG = Random.default_rng()) where {T,Tv,Ti}
     n_users, n_items = size(X)
     k = model.rank
@@ -161,7 +161,7 @@ function Gideon.fit_gpu!(model::Gideon.ImplicitALS{T}, X::SparseMatrixCSC{Tv,Ti}
     U = randn(rng, T, k, n_users) .* T(0.01)
     V = randn(rng, T, k, n_items) .* T(0.01)
 
-    model.verbose && @info "[iALS-GPU] Training rank=$k, $(n_users) users × $(n_items) items"
+    model.verbose && @info "[IALS-GPU] Training rank=$k, $(n_users) users × $(n_items) items"
 
     X_csr = Gideon.to_csr(X)
     monitor = Gideon.ConvergenceMonitor{T}(tol=T(model.convergence_tol), min_iter=2)
@@ -216,12 +216,12 @@ function Gideon.fit_gpu!(model::Gideon.ImplicitALS{T}, X::SparseMatrixCSC{Tv,Ti}
         total_seconds = Gideon.elapsed_seconds(monitor)
 
         if model.verbose
-            Gideon.log_iteration("iALS-GPU", iter, model.max_iter, Float64(loss),
+            Gideon.log_iteration("IALS-GPU", iter, model.max_iter, Float64(loss),
                                 iter_seconds, total_seconds)
         end
 
         if Gideon.record!(monitor, loss)
-            model.verbose && @info "[iALS-GPU] converged at iteration $iter"
+            model.verbose && @info "[IALS-GPU] converged at iteration $iter"
             break
         end
     end
@@ -276,7 +276,7 @@ function _gpu_ials_update_buffered!(target::Matrix{T}, source::Matrix{T}, R,
 end
 
 """
-Compute reconstruction loss for iALS (CPU, used for convergence monitoring).
+Compute reconstruction loss for IALS (CPU, used for convergence monitoring).
 """
 function _ials_loss(U::Matrix{T}, V::Matrix{T}, X::SparseMatrixCSC, α::T, λ::T) where {T}
     k = size(U, 1)
@@ -300,20 +300,20 @@ function _ials_loss(U::Matrix{T}, V::Matrix{T}, X::SparseMatrixCSC, α::T, λ::T
 end
 
 # ──────────────────────────────────────────────────────────────────────────────
-# GPU-accelerated WeightedMatrixFactorization
+# GPU-accelerated WMF
 # ──────────────────────────────────────────────────────────────────────────────
 
 """
-    fit_gpu!(model::WeightedMatrixFactorization, X; rng, U_init, V_init) -> model
+    fit_gpu!(model::WMF, X; rng, U_init, V_init) -> model
 
-GPU-accelerated WeightedMatrixFactorization. Uses cuBLAS syrk for Gramian computation (YᵀY)
+GPU-accelerated WMF. Uses cuBLAS syrk for Gramian computation (YᵀY)
 on GPU, then performs per-user/item Cholesky solves on CPU with
 pre-allocated per-thread buffers.
 
 This provides significant speedup for large item/user counts where the
 Gramian computation (O(k² × n_items)) dominates iteration cost.
 """
-function Gideon.fit_gpu!(model::Gideon.WeightedMatrixFactorization{T}, X::SparseMatrixCSC{Tv,Ti};
+function Gideon.fit_gpu!(model::Gideon.WMF{T}, X::SparseMatrixCSC{Tv,Ti};
                          rng::Random.AbstractRNG = Random.default_rng(),
                          U_init::Union{Nothing, Matrix{T}} = nothing,
                          V_init::Union{Nothing, Matrix{T}} = nothing) where {T,Tv,Ti}
@@ -327,7 +327,7 @@ function Gideon.fit_gpu!(model::Gideon.WeightedMatrixFactorization{T}, X::Sparse
     model.user_factors = isnothing(U_init) ? Gideon.init_factors(rng, k, n_users) : copy(U_init)
     model.item_factors = isnothing(V_init) ? Gideon.init_factors(rng, k, n_items) : copy(V_init)
 
-    model.verbose && @info "[WeightedMatrixFactorization-GPU] Training rank=$k, solver=$(model.solver), $(n_users) users × $(n_items) items"
+    model.verbose && @info "[WMF-GPU] Training rank=$k, solver=$(model.solver), $(n_users) users × $(n_items) items"
 
     # Build transpose for row access
     Xt = SparseMatrixCSC(X')
@@ -355,12 +355,12 @@ function Gideon.fit_gpu!(model::Gideon.WeightedMatrixFactorization{T}, X::Sparse
         total_seconds = Gideon.elapsed_seconds(monitor)
 
         if model.verbose
-            Gideon.log_iteration("WeightedMatrixFactorization-GPU", iter, model.max_iter, Float64(loss),
+            Gideon.log_iteration("WMF-GPU", iter, model.max_iter, Float64(loss),
                                 iter_seconds, total_seconds)
         end
 
         if Gideon.record!(monitor, loss)
-            model.verbose && @info "[WeightedMatrixFactorization-GPU] converged at iteration $iter"
+            model.verbose && @info "[WMF-GPU] converged at iteration $iter"
             break
         end
     end
@@ -374,7 +374,7 @@ Single ALS sweep with GPU-accelerated Gramian computation via cuBLAS syrk.
 The Gramian YᵀY is computed on GPU, then per-entity solves run on CPU.
 """
 function _gpu_wrmf_sweep!(
-    model::Gideon.WeightedMatrixFactorization{T},
+    model::Gideon.WMF{T},
     A::SparseMatrixCSC,
     factors::Matrix{T},
     fixed::Matrix{T},

@@ -38,9 +38,9 @@ println("  X_large:  $(size(X_large))")
 RANK = 10; LAMBDA = 0.1; ALPHA = 1.0; N_ITER = 10
 
 # ─────────────────────────────────────────────
-# 2. WeightedMatrixFactorization — correctness vs R
+# 2. WMF — correctness vs R
 # ─────────────────────────────────────────────
-println("\n--- WeightedMatrixFactorization Correctness vs R (small, CholeskySolver, 10 iter) ---")
+println("\n--- WMF Correctness vs R (small, CholeskySolver, 10 iter) ---")
 
 # Load R reference factors
 r_user_raw = CSV.read("/tmp/r_user_emb_small.csv", DataFrame)
@@ -56,7 +56,7 @@ println("  R user F-norm: $(@sprintf("%.6f", norm(R_user)))")
 println("  R item F-norm: $(@sprintf("%.6f", norm(R_item)))")
 
 rng = MersenneTwister(42)
-model_jl = WeightedMatrixFactorization(rank=RANK, λ=LAMBDA, α=ALPHA, max_iter=N_ITER,
+model_jl = WMF(rank=RANK, λ=LAMBDA, α=ALPHA, max_iter=N_ITER,
                 solver=CholeskySolver(), feedback=IMPLICIT)
 t_small_chol = @elapsed fit!(model_jl, X_small; rng=rng)
 
@@ -87,20 +87,20 @@ println("  R² (R):      $(@sprintf("%.6f", r2_r))")
 println("  R² diff:     $(@sprintf("%.6f", abs(r2_julia - r2_r)))")
 
 # ─────────────────────────────────────────────
-# 3. WeightedMatrixFactorization Benchmarks — BenchmarkTools
+# 3. WMF Benchmarks — BenchmarkTools
 # ─────────────────────────────────────────────
-println("\n--- WeightedMatrixFactorization Benchmarks ---")
+println("\n--- WMF Benchmarks ---")
 
 # ─────────────────────────────────────────────
-# 3. WeightedMatrixFactorization Benchmarks — 3-run average
+# 3. WMF Benchmarks — 3-run average
 # ─────────────────────────────────────────────
-println("\n--- WeightedMatrixFactorization Benchmarks ---")
+println("\n--- WMF Benchmarks ---")
 
 function bench_wrmf_elapsed(X, solver, n_iter=N_ITER, n_runs=3)
     times = Float64[]
     for _ in 1:n_runs
         t = @elapsed begin
-            m = WeightedMatrixFactorization(rank=RANK, λ=LAMBDA, α=ALPHA, max_iter=n_iter,
+            m = WMF(rank=RANK, λ=LAMBDA, α=ALPHA, max_iter=n_iter,
                      solver=solver, feedback=IMPLICIT)
             fit!(m, X; rng=MersenneTwister(42))
         end
@@ -120,9 +120,9 @@ println("  Large  ($(size(X_large)))  CholeskySolver: $(@sprintf("%.3f", t_jl_la
 println("  Medium ($(size(X_medium))) CG:       $(@sprintf("%.3f", t_jl_medium_cg)) s")
 
 # ─────────────────────────────────────────────
-# 4. OnlineRegressor — correctness vs R
+# 4. FTRL — correctness vs R
 # ─────────────────────────────────────────────
-println("\n--- OnlineRegressor Correctness vs R ---")
+println("\n--- FTRL Correctness vs R ---")
 X_ftrl_df   = CSV.read("/tmp/X_ftrl.csv", DataFrame)
 y_ftrl_df   = CSV.read("/tmp/y_ftrl.csv", DataFrame)
 dims_ftrl   = CSV.read("/tmp/X_ftrl_dims.csv", DataFrame)
@@ -134,7 +134,7 @@ r_weights   = CSV.read("/tmp/r_ftrl_weights.csv", DataFrame).w
 r_preds_ftrl = CSV.read("/tmp/r_ftrl_preds.csv", DataFrame).p
 
 rng2 = MersenneTwister(42)
-ftrl_jl = OnlineRegressor(learning_rate=0.1, learning_rate_decay=0.5, λ=0.01, l1_ratio=0.5)
+ftrl_jl = FTRL(learning_rate=0.1, learning_rate_decay=0.5, λ=0.01, l1_ratio=0.5)
 t_ftrl_jl = @elapsed for _ in 1:5
     partial_fit!(ftrl_jl, X_ftrl, y_ftrl; rng=rng2)
 end
@@ -154,7 +154,7 @@ println("  Prediction correlation: $(@sprintf("%.6f", cor(p_jl, r_preds_ftrl)))"
 t_ftrl_bench = let ts = Float64[]
     for _ in 1:3
         push!(ts, @elapsed begin
-            m = OnlineRegressor(learning_rate=0.1, learning_rate_decay=0.5, λ=0.01, l1_ratio=0.5)
+            m = FTRL(learning_rate=0.1, learning_rate_decay=0.5, λ=0.01, l1_ratio=0.5)
             for _ in 1:5; partial_fit!(m, X_ftrl, y_ftrl; rng=MersenneTwister(42)); end
         end)
     end
@@ -170,7 +170,7 @@ x_xor = sparse([0.0 0.0; 0.0 1.0; 1.0 0.0; 1.0 1.0])
 y_xor = [0.0, 1.0, 1.0, 0.0]
 
 rng3 = MersenneTwister(42)
-fm_jl = FactorizationMachine(learning_rate_w=10.0, rank=2, λ_w=0.0, λ_v=0.0,
+fm_jl = FM(learning_rate_w=10.0, rank=2, λ_w=0.0, λ_v=0.0,
                              family=:binomial, intercept=true, learning_rate_v=10.0)
 t_fm_jl = @elapsed fit!(fm_jl, x_xor, y_xor; n_iter=200, rng=rng3)
 p_fm_jl = predict(fm_jl, x_xor)
@@ -182,7 +182,7 @@ println("  XOR correct: $xor_correct")
 t_fm_bench = let ts = Float64[]
     for _ in 1:5
         push!(ts, @elapsed begin
-            m = FactorizationMachine(learning_rate_w=10.0, rank=2, λ_w=0.0, λ_v=0.0,
+            m = FM(learning_rate_w=10.0, rank=2, λ_w=0.0, λ_v=0.0,
                                      family=:binomial, intercept=true, learning_rate_v=10.0)
             fit!(m, x_xor, y_xor; n_iter=200, rng=MersenneTwister(42))
         end)
@@ -192,16 +192,16 @@ end
 let s = @sprintf("%.3f", t_fm_bench); println("  Min-5 time: $s s"); end
 
 # ─────────────────────────────────────────────
-# 6. GlobalVectors — timing
+# 6. GloVe — timing
 # ─────────────────────────────────────────────
-println("\n--- GlobalVectors ---")
+println("\n--- GloVe ---")
 rng4 = MersenneTwister(42)
 A = sprand(rng4, 200, 200, 0.1)
 A = A + A'
 nz = nonzeros(A); nz .= abs.(nz) .+ 0.1
 
 rng5 = MersenneTwister(42)
-glove_jl = GlobalVectors(rank=20, x_max=10.0, learning_rate=0.15)
+glove_jl = GloVe(rank=20, x_max=10.0, learning_rate=0.15)
 t_glove_jl = @elapsed fit!(glove_jl, A; n_iter=10, rng=rng5)
 println("  Time (10 iter, 200×200): $(@sprintf("%.3f", t_glove_jl)) s")
 println("  Cost history length: $(length(glove_jl.loss_history))")
@@ -210,7 +210,7 @@ println("  Final cost: $(@sprintf("%.6f", glove_jl.loss_history[end]))")
 t_glove_bench = let ts = Float64[]
     for _ in 1:3
         push!(ts, @elapsed begin
-            m = GlobalVectors(rank=20, x_max=10.0, learning_rate=0.15)
+            m = GloVe(rank=20, x_max=10.0, learning_rate=0.15)
             fit!(m, A; n_iter=10, rng=MersenneTwister(42))
         end)
     end

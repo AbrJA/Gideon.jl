@@ -3,7 +3,7 @@
 @testset "Callbacks" begin
     @testset "EarlyStoppingCallback" begin
         cb = EarlyStoppingCallback(patience=3, min_delta=0.01)
-        model = ImplicitALS(rank=3, verbose=false)
+        model = IALS(rank=3, verbose=false)
 
         # Improving losses
         for loss in [1.0, 0.9, 0.8, 0.7]
@@ -25,7 +25,7 @@
 
     @testset "LossHistoryCallback" begin
         cb = LossHistoryCallback()
-        model = ImplicitALS(rank=3, verbose=false)
+        model = IALS(rank=3, verbose=false)
         for i in 1:5
             info = Gideon.CallbackInfo(i, Float64(i) * 0.1, 0.0, model)
             @test on_epoch_end(cb, info) == :continue
@@ -36,7 +36,7 @@
 
     @testset "LearningRateCallback" begin
         cb = LearningRateCallback(decay=0.5, min_lr=0.001)
-        model = BayesianPersonalizedRanking(rank=3, learning_rate=1.0, verbose=false)
+        model = BPR(rank=3, learning_rate=1.0, verbose=false)
         info = Gideon.CallbackInfo(1, 0.5, 0.0, model)
         on_epoch_end(cb, info)
         @test model.learning_rate ≈ 0.5
@@ -47,7 +47,7 @@
     @testset "run_callbacks" begin
         cb1 = LossHistoryCallback()
         cb2 = EarlyStoppingCallback(patience=1, min_delta=0.0)
-        model = ImplicitALS(rank=3, verbose=false)
+        model = IALS(rank=3, verbose=false)
 
         # First call - improving
         info1 = Gideon.CallbackInfo(1, 1.0, 0.0, model)
@@ -62,7 +62,7 @@ end
 @testset "Serialization" begin
     rng = MersenneTwister(42)
     X = sprand(rng, 30, 20, 0.1)
-    model = ShallowAutoencoder(λ=100.0, verbose=false)
+    model = EASE(λ=100.0, verbose=false)
     fit!(model, X)
 
     # Save and load
@@ -72,7 +72,7 @@ end
         @test isfile(tmpfile)
 
         loaded = load_model(tmpfile)
-        @test loaded isa ShallowAutoencoder
+        @test loaded isa EASE
         @test loaded.is_fitted
         @test loaded.B ≈ model.B
         @test loaded.λ ≈ model.λ
@@ -104,7 +104,7 @@ end
         X = sprand(rng, 50, 30, 0.15)
 
         mean_score, std_score, fold_scores = crossval(
-            () -> ShallowAutoencoder(λ=200.0, verbose=false),
+            () -> EASE(λ=200.0, verbose=false),
             X; n_folds=3, k=5, metric=map_at_k, rng=MersenneTwister(1)
         )
 
@@ -119,7 +119,7 @@ end
         X = sprand(rng, 50, 30, 0.15)
 
         best_params, best_score, results = grid_search(
-            p -> ShallowAutoencoder(λ=p.λ, verbose=false),
+            p -> EASE(λ=p.λ, verbose=false),
             X,
             Dict(:λ => [100.0, 500.0]);
             k=5, test_fraction=0.3, verbose=false, rng=MersenneTwister(1)
@@ -135,7 +135,7 @@ end
         X = sprand(rng, 50, 30, 0.15)
 
         best_params, best_score, results = random_search(
-            p -> ShallowAutoencoder(λ=p.λ, verbose=false),
+            p -> EASE(λ=p.λ, verbose=false),
             X,
             Dict(:λ => r -> 10.0^(rand(r) * 3));
             n_trials=3, k=5, test_fraction=0.3, verbose=false, rng=MersenneTwister(1)

@@ -78,7 +78,7 @@ end
         tmpdir = joinpath(tempdir(), "gideon_test_$(rand(1000:9999))", "subdir")
         tmpfile = joinpath(tmpdir, "model.jls")
         try
-            model = ShallowAutoencoder(λ=50.0, verbose=false)
+            model = EASE(λ=50.0, verbose=false)
             rng = MersenneTwister(42)
             X = sprand(rng, 20, 15, 0.1)
             fit!(model, X)
@@ -95,8 +95,8 @@ end
         rng = MersenneTwister(42)
         X = sprand(rng, 30, 20, 0.1)
 
-        # WeightedMatrixFactorization
-        m = WeightedMatrixFactorization(rank=3, max_iter=2, verbose=false)
+        # WMF
+        m = WMF(rank=3, max_iter=2, verbose=false)
         fit!(m, X; rng=MersenneTwister(1))
         tmpfile = tempname() * ".jls"
         save_model(m, tmpfile)
@@ -104,8 +104,8 @@ end
         @test loaded.user_factors ≈ m.user_factors
         rm(tmpfile; force=true)
 
-        # iALS
-        m = ImplicitALS(rank=3, max_iter=2, verbose=false)
+        # IALS
+        m = IALS(rank=3, max_iter=2, verbose=false)
         fit!(m, X; rng=MersenneTwister(1))
         tmpfile = tempname() * ".jls"
         save_model(m, tmpfile)
@@ -113,8 +113,8 @@ end
         @test loaded.user_factors ≈ m.user_factors
         rm(tmpfile; force=true)
 
-        # BayesianPersonalizedRanking
-        m = BayesianPersonalizedRanking(rank=3, max_iter=2, verbose=false)
+        # BPR
+        m = BPR(rank=3, max_iter=2, verbose=false)
         fit!(m, X; rng=MersenneTwister(1))
         tmpfile = tempname() * ".jls"
         save_model(m, tmpfile)
@@ -132,7 +132,7 @@ end
     tmpdir = joinpath(tempdir(), "gideon_checkpoint_$(rand(1000:9999))")
     try
         cb = CheckpointCallback(every=2, path=tmpdir)
-        model = ImplicitALS(rank=3, verbose=false)
+        model = IALS(rank=3, verbose=false)
         rng = MersenneTwister(42)
         X = sprand(rng, 20, 15, 0.1)
         fit!(model, X; rng=MersenneTwister(1))
@@ -151,7 +151,7 @@ end
 
         # Verify saved model is loadable
         loaded = load_model(joinpath(tmpdir, "model_epoch_4.jls"))
-        @test loaded isa ImplicitALS
+        @test loaded isa IALS
         @test loaded.user_factors ≈ model.user_factors
     finally
         rm(tmpdir; recursive=true, force=true)
@@ -166,8 +166,8 @@ end
     rng = MersenneTwister(42)
     X = sprand(rng, 40, 30, 0.1)
 
-    @testset "WeightedMatrixFactorization score" begin
-        model = WeightedMatrixFactorization(rank=4, max_iter=3, verbose=false)
+    @testset "WMF score" begin
+        model = WMF(rank=4, max_iter=3, verbose=false)
         fit!(model, X; rng=MersenneTwister(1))
         scores = score(model, [1, 2, 3], [1, 2, 3])
         @test length(scores) == 3
@@ -178,8 +178,8 @@ end
         @test scores ≈ expected
     end
 
-    @testset "LogisticMatrixFactorization recommend" begin
-        model = LogisticMatrixFactorization(rank=4, max_iter=3, learning_rate=0.01, verbose=false)
+    @testset "LogisticMF recommend" begin
+        model = LogisticMF(rank=4, max_iter=3, learning_rate=0.01, verbose=false)
         fit!(model, X; rng=MersenneTwister(1))
         preds = recommend(model, X; k=5)
         @test size(preds) == (40, 5)
@@ -187,9 +187,9 @@ end
         @test all(preds .<= 30)
     end
 
-    @testset "GlobalVectors embeddings" begin
+    @testset "GloVe embeddings" begin
         X_sq = sprand(MersenneTwister(7), 30, 30, 0.1)
-        model = GlobalVectors(rank=4, max_iter=3, verbose=false)
+        model = GloVe(rank=4, max_iter=3, verbose=false)
         fit!(model, X_sq; rng=MersenneTwister(1))
         emb = embeddings(model)
         @test size(emb) == (4, 30)
@@ -205,8 +205,8 @@ end
     rng = MersenneTwister(42)
     X = sprand(rng, 100, 60, 0.05)
 
-    @testset "WeightedMatrixFactorization CholeskySolver transform" begin
-        model = WeightedMatrixFactorization(rank=8, max_iter=5, solver=CholeskySolver(), verbose=false)
+    @testset "WMF CholeskySolver transform" begin
+        model = WMF(rank=8, max_iter=5, solver=CholeskySolver(), verbose=false)
         fit!(model, X; rng=MersenneTwister(1))
         X_new = sprand(MersenneTwister(7), 5, 60, 0.1)
         U_new = transform(model, X_new)
@@ -214,8 +214,8 @@ end
         @test all(isfinite, U_new)
     end
 
-    @testset "WeightedMatrixFactorization CG transform" begin
-        model = WeightedMatrixFactorization(rank=8, max_iter=5, solver=ConjugateGradient(), verbose=false)
+    @testset "WMF CG transform" begin
+        model = WMF(rank=8, max_iter=5, solver=ConjugateGradient(), verbose=false)
         fit!(model, X; rng=MersenneTwister(1))
         X_new = sprand(MersenneTwister(7), 3, 60, 0.1)
         U_new = transform(model, X_new)
@@ -234,7 +234,7 @@ end
 
     @testset "cv with map_at_k" begin
         mean_s, std_s, folds = crossval(
-            () -> ShallowAutoencoder(λ=200.0, verbose=false),
+            () -> EASE(λ=200.0, verbose=false),
             X; n_folds=2, k=5, metric=map_at_k, rng=MersenneTwister(1)
         )
         @test length(folds) == 2
@@ -243,7 +243,7 @@ end
 
     @testset "cv with different model" begin
         mean_s, std_s, folds = crossval(
-            () -> WeightedMatrixFactorization(rank=4, max_iter=3, verbose=false),
+            () -> WMF(rank=4, max_iter=3, verbose=false),
             X; n_folds=2, k=5, metric=map_at_k, rng=MersenneTwister(1)
         )
         @test length(folds) == 2
@@ -267,7 +267,7 @@ end
     rng = MersenneTwister(42)
     X = sprand(rng, 20, 15, 0.3)  # denser so we can check masking
 
-    model = ShallowAutoencoder(λ=50.0, verbose=false)
+    model = EASE(λ=50.0, verbose=false)
     fit!(model, X)
     preds = recommend(model, X; k=5)
 
@@ -289,13 +289,13 @@ end
 end
 
 # ──────────────────────────────────────────────────────────────────────────────
-# SparseLinearModel specific tests
+# SLIM specific tests
 # ──────────────────────────────────────────────────────────────────────────────
 
-@testset "SparseLinearModel recommend" begin
+@testset "SLIM recommend" begin
     rng = MersenneTwister(42)
     X = sprand(rng, 30, 20, 0.15)
-    model = SparseLinearModel(λ_1=1.0, λ_2=0.5, max_iter=5, verbose=false)
+    model = SLIM(λ_1=1.0, λ_2=0.5, max_iter=5, verbose=false)
     fit!(model, X)
     @test model.is_fitted
 
@@ -334,24 +334,24 @@ catch
 end
 
 if _HAS_CUDA
-    @testset "GPU ShallowAutoencoder correctness" begin
+    @testset "GPU EASE correctness" begin
         rng = MersenneTwister(42)
         X = sprand(rng, 100, 80, 0.05)
 
-        model_gpu = ShallowAutoencoder(λ=100.0, verbose=false)
+        model_gpu = EASE(λ=100.0, verbose=false)
         fit_gpu!(model_gpu, X)
-        model_cpu = ShallowAutoencoder(λ=100.0, verbose=false)
+        model_cpu = EASE(λ=100.0, verbose=false)
         fit!(model_cpu, X)
 
         @test model_gpu.is_fitted
         @test model_gpu.B ≈ model_cpu.B atol=1e-10
     end
 
-    @testset "GPU iALS correctness" begin
+    @testset "GPU IALS correctness" begin
         rng = MersenneTwister(42)
         X = sprand(rng, 80, 60, 0.05)
 
-        model = ImplicitALS(rank=8, max_iter=5, α=10.0, verbose=false)
+        model = IALS(rank=8, max_iter=5, α=10.0, verbose=false)
         fit_gpu!(model, X; rng=MersenneTwister(1))
 
         @test model.is_fitted
@@ -361,17 +361,17 @@ if _HAS_CUDA
         @test all(isfinite, model.item_factors)
 
         # Loss should decrease
-        model2 = ImplicitALS(rank=8, max_iter=1, α=10.0, verbose=false)
+        model2 = IALS(rank=8, max_iter=1, α=10.0, verbose=false)
         fit_gpu!(model2, X; rng=MersenneTwister(1))
         # More iterations => lower residual (loosely)
         @test norm(model.user_factors) > 0
     end
 
-    @testset "GPU WeightedMatrixFactorization correctness" begin
+    @testset "GPU WMF correctness" begin
         rng = MersenneTwister(42)
         X = sprand(rng, 80, 60, 0.05)
 
-        model = WeightedMatrixFactorization(rank=8, max_iter=5, solver=CholeskySolver(), verbose=false)
+        model = WMF(rank=8, max_iter=5, solver=CholeskySolver(), verbose=false)
         fit_gpu!(model, X; rng=MersenneTwister(1))
 
         @test model.is_fitted
@@ -385,7 +385,7 @@ if _HAS_CUDA
         rng = MersenneTwister(42)
         X = sprand(rng, 50, 40, 0.1)
 
-        model = ImplicitALS(rank=8, max_iter=5, verbose=false)
+        model = IALS(rank=8, max_iter=5, verbose=false)
         fit!(model, X; rng=MersenneTwister(1))
 
         scores_gpu = score_gpu(model, X)
@@ -399,7 +399,7 @@ if _HAS_CUDA
         rng = MersenneTwister(42)
         X = sprand(rng, 50, 40, 0.1)
 
-        model = ImplicitALS(rank=8, max_iter=5, verbose=false)
+        model = IALS(rank=8, max_iter=5, verbose=false)
         fit!(model, X; rng=MersenneTwister(1))
 
         preds_gpu = recommend_gpu(model, X; k=10)
@@ -416,7 +416,7 @@ if _HAS_CUDA
         rng = MersenneTwister(42)
         X = sprand(rng, 30, 25, 0.2)
 
-        model = WeightedMatrixFactorization(rank=5, max_iter=5, verbose=false)
+        model = WMF(rank=5, max_iter=5, verbose=false)
         fit!(model, X; rng=MersenneTwister(1))
 
         preds = recommend_gpu(model, X; k=5)
@@ -440,7 +440,7 @@ if _HAS_CUDA
         rng = MersenneTwister(42)
         X = sprand(rng, 1000, 500, 0.01)
 
-        model = ShallowAutoencoder(λ=500.0, verbose=false)
+        model = EASE(λ=500.0, verbose=false)
         fit_gpu!(model, X)
         @test model.is_fitted
         @test size(model.B) == (500, 500)
@@ -461,7 +461,7 @@ end
 @testset "Algorithm edge cases" begin
     @testset "Very sparse matrix (1 interaction)" begin
         X = sparse([1], [1], [1.0], 50, 50)
-        model = ImplicitALS(rank=3, max_iter=3, verbose=false)
+        model = IALS(rank=3, max_iter=3, verbose=false)
         fit!(model, X; rng=MersenneTwister(1))
         @test model.is_fitted
         @test all(isfinite, model.user_factors)
@@ -469,7 +469,7 @@ end
 
     @testset "Single user" begin
         X = sparse([1, 1, 1], [1, 2, 3], [1.0, 1.0, 1.0], 1, 10)
-        model = ShallowAutoencoder(λ=10.0, verbose=false)
+        model = EASE(λ=10.0, verbose=false)
         fit!(model, X)
         @test model.is_fitted
         preds = recommend(model, X; k=5)
@@ -478,14 +478,14 @@ end
 
     @testset "Single item per user" begin
         X = sparse([1, 2, 3], [1, 2, 3], [1.0, 1.0, 1.0], 3, 5)
-        model = BayesianPersonalizedRanking(rank=3, max_iter=5, verbose=false)
+        model = BPR(rank=3, max_iter=5, verbose=false)
         fit!(model, X; rng=MersenneTwister(1))
         @test model.is_fitted
     end
 
     @testset "k larger than items" begin
         X = sprand(MersenneTwister(42), 10, 5, 0.3)
-        model = ShallowAutoencoder(λ=10.0, verbose=false)
+        model = EASE(λ=10.0, verbose=false)
         fit!(model, X)
         # k=10 > n_items=5, should still work
         preds = recommend(model, X; k=10)
@@ -495,7 +495,7 @@ end
     @testset "Float32 input matrix" begin
         rng = MersenneTwister(42)
         X = SparseMatrixCSC{Float32,Int}(sprand(rng, 50, 30, 0.1))
-        model = WeightedMatrixFactorization(rank=4, max_iter=3, verbose=false)
+        model = WMF(rank=4, max_iter=3, verbose=false)
         fit!(model, X; rng=MersenneTwister(1))
         @test model.is_fitted
         @test all(isfinite, model.user_factors)

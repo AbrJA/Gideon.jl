@@ -1,25 +1,25 @@
 # test/test_utils.jl — Type hierarchy, utilities, sparse utils
 
 @testset "Type Hierarchy" begin
-    @test WeightedMatrixFactorization <: AbstractMatrixFactorization
-    @test WeightedMatrixFactorization <: AbstractRecommender
-    @test WeightedMatrixFactorization <: AbstractSparseModel
-    @test GlobalVectors <: AbstractMatrixFactorization
-    @test GlobalVectors <: AbstractRecommender
-    @test LogisticMatrixFactorization <: AbstractMatrixFactorization
-    @test BayesianPersonalizedRanking <: AbstractMatrixFactorization
-    @test ImplicitALS <: AbstractMatrixFactorization
-    @test ElementwiseALS <: AbstractMatrixFactorization
-    @test ShallowAutoencoder <: AbstractItemSimilarity
-    @test ShallowAutoencoder <: AbstractRecommender
-    @test SparseLinearModel <: AbstractItemSimilarity
-    @test SparseLinearModel <: AbstractRecommender
-    @test OnlineRegressor <: AbstractSparseRegression
-    @test OnlineRegressor <: AbstractSparseModel
-    @test FactorizationMachine <: AbstractSparseRegression
+    @test WMF <: AbstractMatrixFactorization
+    @test WMF <: AbstractRecommender
+    @test WMF <: AbstractSparseModel
+    @test GloVe <: AbstractMatrixFactorization
+    @test GloVe <: AbstractRecommender
+    @test LogisticMF <: AbstractMatrixFactorization
+    @test BPR <: AbstractMatrixFactorization
+    @test IALS <: AbstractMatrixFactorization
+    @test EALS <: AbstractMatrixFactorization
+    @test EASE <: AbstractItemSimilarity
+    @test EASE <: AbstractRecommender
+    @test SLIM <: AbstractItemSimilarity
+    @test SLIM <: AbstractRecommender
+    @test FTRL <: AbstractSparseRegression
+    @test FTRL <: AbstractSparseModel
+    @test FM <: AbstractSparseRegression
     # Verify AbstractRecommender is NOT a parent of regression models
-    @test !(OnlineRegressor <: AbstractRecommender)
-    @test !(FactorizationMachine <: AbstractRecommender)
+    @test !(FTRL <: AbstractRecommender)
+    @test !(FM <: AbstractRecommender)
 end
 
 @testset "Sigmoid" begin

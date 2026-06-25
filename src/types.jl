@@ -125,7 +125,7 @@ Exponential link function: exp(x). For count data.
 struct Poisson <: Family end
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Negative sampling types (for BayesianPersonalizedRanking)
+# Negative sampling types (for BPR)
 # ──────────────────────────────────────────────────────────────────────────────
 
 """
@@ -206,7 +206,7 @@ function predict end
     update!(model, X, y; kwargs...)
 
 Run a single epoch of online/incremental learning. For streaming models
-(OnlineRegressor, FactorizationMachine, ElementwiseALS).
+(FTRL, FM, EALS).
 """
 function update! end
 

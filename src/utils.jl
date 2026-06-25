@@ -77,7 +77,7 @@ end
 
 """
 Binary search in a sorted Int32 vector. O(log n) and cache-friendly.
-Used by BayesianPersonalizedRanking and LogisticMatrixFactorization for negative sampling.
+Used by BPR and LogisticMF for negative sampling.
 """
 @inline function _insorted(sorted::Vector{Int32}, val::Int32)
     lo, hi = 1, length(sorted)
@@ -223,7 +223,7 @@ end
 # Default recommend/score for AbstractMatrixFactorization
 # ──────────────────────────────────────────────────────────────────────────────
 # Models with user_factors/item_factors get these for free.
-# Override only when special logic is needed (e.g. WeightedMatrixFactorization transform, GlobalVectors embeddings).
+# Override only when special logic is needed (e.g. WMF transform, GloVe embeddings).
 
 function recommend(model::AbstractMatrixFactorization, X::SparseMatrixCSC; k::Int=10)
     model.is_fitted || error("Model not fitted")

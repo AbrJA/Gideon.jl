@@ -1,9 +1,9 @@
-# test/test_lmf.jl — LogisticMatrixFactorization algorithm tests
+# test/test_lmf.jl — LogisticMF algorithm tests
 
 @testset "Basic fit" begin
     rng = MersenneTwister(42)
     X = sprand(rng, 80, 60, 0.05)
-    model = LogisticMatrixFactorization(rank=5, λ=0.01, α=1.0, learning_rate=0.01, max_iter=5, verbose=false)
+    model = LogisticMF(rank=5, λ=0.01, α=1.0, learning_rate=0.01, max_iter=5, verbose=false)
     fit!(model, X; rng=rng)
 
     @test model.is_fitted
@@ -16,7 +16,7 @@ end
 @testset "predict returns valid indices" begin
     rng = MersenneTwister(42)
     X = sprand(rng, 80, 60, 0.05)
-    model = LogisticMatrixFactorization(rank=5, λ=0.01, learning_rate=0.01, max_iter=5, verbose=false)
+    model = LogisticMF(rank=5, λ=0.01, learning_rate=0.01, max_iter=5, verbose=false)
     fit!(model, X; rng=rng)
     preds = recommend(model, X; k=5)
     @test size(preds) == (80, 5)
@@ -28,8 +28,8 @@ end
     rng = MersenneTwister(42)
     X = sprand(rng, 50, 40, 0.1)
 
-    m_low = LogisticMatrixFactorization(rank=5, n_negative=1, max_iter=10, learning_rate=0.01, verbose=false)
-    m_high = LogisticMatrixFactorization(rank=5, n_negative=8, max_iter=10, learning_rate=0.01, verbose=false)
+    m_low = LogisticMF(rank=5, n_negative=1, max_iter=10, learning_rate=0.01, verbose=false)
+    m_high = LogisticMF(rank=5, n_negative=8, max_iter=10, learning_rate=0.01, verbose=false)
     fit!(m_low, X; rng=MersenneTwister(1))
     fit!(m_high, X; rng=MersenneTwister(1))
 
@@ -41,7 +41,7 @@ end
 @testset "Convergence tolerance" begin
     rng = MersenneTwister(42)
     X = sprand(rng, 60, 50, 0.08)
-    model = LogisticMatrixFactorization(rank=5, λ=0.01, learning_rate=0.01, max_iter=100,
+    model = LogisticMF(rank=5, λ=0.01, learning_rate=0.01, max_iter=100,
                 convergence_tol=0.001, verbose=false)
     fit!(model, X; rng=rng)
     @test model.is_fitted
@@ -49,7 +49,7 @@ end
 
 @testset "Edge case: very sparse matrix" begin
     X = sparse([1, 2], [1, 2], [1.0, 1.0], 100, 100)
-    model = LogisticMatrixFactorization(rank=3, max_iter=5, learning_rate=0.01, verbose=false)
+    model = LogisticMF(rank=3, max_iter=5, learning_rate=0.01, verbose=false)
     fit!(model, X; rng=MersenneTwister(1))
     @test model.is_fitted
     @test all(isfinite, model.user_factors)

@@ -75,9 +75,9 @@ if isdir(FIXTURE_DIR) && isfile(joinpath(FIXTURE_DIR, "wrmf_chol_loss.txt"))
                               joinpath(FIXTURE_DIR, "X_small_dims.csv"))
         RANK = 5; λ_r = 0.1; α_r = 1.0
 
-        @testset "WeightedMatrixFactorization CholeskySolver: loss ≤ R × 1.10" begin
+        @testset "WMF CholeskySolver: loss ≤ R × 1.10" begin
             r_loss = _read_scalar(joinpath(FIXTURE_DIR, "wrmf_chol_loss.txt"))
-            m = WeightedMatrixFactorization(rank=RANK, λ=λ_r, α=α_r, max_iter=50,
+            m = WMF(rank=RANK, λ=λ_r, α=α_r, max_iter=50,
                      solver=CholeskySolver(), feedback=IMPLICIT, convergence_tol=1e-6, verbose=false)
             fit!(m, X_ref; rng=MersenneTwister(42))
             jl_loss = _wrmf_loss_ref(m.user_factors, m.item_factors, X_ref, λ_r, α_r)
@@ -85,23 +85,23 @@ if isdir(FIXTURE_DIR) && isfile(joinpath(FIXTURE_DIR, "wrmf_chol_loss.txt"))
             @test jl_loss <= r_loss * 1.10
         end
 
-        @testset "WeightedMatrixFactorization CholeskySolver: warm-start does not increase loss" begin
+        @testset "WMF CholeskySolver: warm-start does not increase loss" begin
             U_raw = _read_matrix(joinpath(FIXTURE_DIR, "wrmf_chol_user.csv"))
             V_raw = _read_matrix(joinpath(FIXTURE_DIR, "wrmf_chol_item.csv"))
             U_r = Matrix{Float64}(U_raw')
             V_r = Matrix{Float64}(V_raw)
             r_loss = _read_scalar(joinpath(FIXTURE_DIR, "wrmf_chol_loss.txt"))
 
-            m_ws = WeightedMatrixFactorization(rank=RANK, λ=λ_r, α=α_r, max_iter=1,
+            m_ws = WMF(rank=RANK, λ=λ_r, α=α_r, max_iter=1,
                         solver=CholeskySolver(), feedback=IMPLICIT, convergence_tol=-1.0, verbose=false)
             fit!(m_ws, X_ref; rng=MersenneTwister(1), U_init=U_r, V_init=V_r)
             jl_loss_ws = _wrmf_loss_ref(m_ws.user_factors, m_ws.item_factors, X_ref, λ_r, α_r)
             @test jl_loss_ws <= r_loss * 1.10
         end
 
-        @testset "WeightedMatrixFactorization CG: loss ≤ R × 1.10" begin
+        @testset "WMF CG: loss ≤ R × 1.10" begin
             r_loss_cg = _read_scalar(joinpath(FIXTURE_DIR, "wrmf_cg_loss.txt"))
-            m_cg = WeightedMatrixFactorization(rank=RANK, λ=λ_r, α=α_r, max_iter=50,
+            m_cg = WMF(rank=RANK, λ=λ_r, α=α_r, max_iter=50,
                         solver=ConjugateGradient(), cg_steps=10,
                         convergence_tol=1e-6, verbose=false)
             fit!(m_cg, X_ref; rng=MersenneTwister(42))
@@ -110,14 +110,14 @@ if isdir(FIXTURE_DIR) && isfile(joinpath(FIXTURE_DIR, "wrmf_chol_loss.txt"))
             @test jl_loss_cg <= r_loss_cg * 1.10
         end
 
-        @testset "OnlineRegressor: weights and predictions match R" begin
+        @testset "FTRL: weights and predictions match R" begin
             X_ftrl = _load_sparse(joinpath(FIXTURE_DIR, "X_ftrl.csv"),
                                    joinpath(FIXTURE_DIR, "X_ftrl_dims.csv"))
             y_ftrl = _read_col(joinpath(FIXTURE_DIR, "y_ftrl.csv"), "y")
             r_w = _read_col(joinpath(FIXTURE_DIR, "ftrl_weights.csv"), "w")
             r_preds = _read_col(joinpath(FIXTURE_DIR, "ftrl_preds.csv"), "p")
 
-            m_ftrl = OnlineRegressor(learning_rate=0.1, learning_rate_decay=0.5,
+            m_ftrl = FTRL(learning_rate=0.1, learning_rate_decay=0.5,
                           λ=0.01, l1_ratio=0.5, verbose=false)
             for _ in 1:5
                 update!(m_ftrl, X_ftrl, y_ftrl; rng=MersenneTwister(42))
@@ -137,7 +137,7 @@ if isdir(FIXTURE_DIR) && isfile(joinpath(FIXTURE_DIR, "wrmf_chol_loss.txt"))
             r_correct = r_preds_fm[1] < 0.3 && r_preds_fm[4] < 0.3 &&
                         r_preds_fm[2] > 0.7 && r_preds_fm[3] > 0.7
             for seed in 1:5
-                m = FactorizationMachine(
+                m = FM(
                     learning_rate_w=10.0, rank=2, max_iter=200,
                     λ_w=0.0, λ_v=0.0, family=Binomial(), intercept=true, verbose=false)
                 fit!(m, x_xor, y_xor; rng=MersenneTwister(seed))
@@ -148,11 +148,11 @@ if isdir(FIXTURE_DIR) && isfile(joinpath(FIXTURE_DIR, "wrmf_chol_loss.txt"))
             @test agreements >= 4
         end
 
-        @testset "GlobalVectors: Julia cost ≤ R × 3.0" begin
+        @testset "GloVe: Julia cost ≤ R × 3.0" begin
             r_cost = _read_scalar(joinpath(FIXTURE_DIR, "glove_final_cost.txt"))
             X_glove = _load_sparse(joinpath(FIXTURE_DIR, "glove_X.csv"),
                                     joinpath(FIXTURE_DIR, "glove_dims.csv"))
-            m_glove = GlobalVectors(rank=5, x_max=10.0, learning_rate=0.15, max_iter=30, verbose=false)
+            m_glove = GloVe(rank=5, x_max=10.0, learning_rate=0.15, max_iter=30, verbose=false)
             fit!(m_glove, X_glove; rng=MersenneTwister(42))
             jl_cost = last(m_glove.loss_history)
             @test isfinite(jl_cost)

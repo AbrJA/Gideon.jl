@@ -12,7 +12,7 @@ Includes a version header and type information for forward-compatibility checkin
 
 # Example
 ```julia
-model = ShallowAutoencoder(λ=100.0)
+model = EASE(λ=100.0)
 fit!(model, X)
 save_model(model, "my_model.jls")
 ```

@@ -1,13 +1,13 @@
 # ──────────────────────────────────────────────────────────────────────────────
-# eALS — Element-wise Alternating Least Squares
+# EALS — Element-wise Alternating Least Squares
 # ──────────────────────────────────────────────────────────────────────────────
 #
 # Reference: He, Zhang, Kan, Chua (2016/2017)
 #   "Fast Matrix Factorization for Online Recommendation with Implicit Feedback"
 #   arXiv:1708.05024
 #
-# Key innovation: Instead of uniform weighting for missing data (as in WeightedMatrixFactorization),
-# eALS uses item-popularity-based non-uniform weighting:
+# Key innovation: Instead of uniform weighting for missing data (as in WMF),
+# EALS uses item-popularity-based non-uniform weighting:
 #   c_{ui} = c_i^miss  for unobserved entries (popularity-based)
 #   c_{ui} = c_i^obs   for observed entries
 #
@@ -22,11 +22,11 @@
 # ──────────────────────────────────────────────────────────────────────────────
 
 """
-    ElementwiseALS{T} <: AbstractMatrixFactorization
+    EALS{T} <: AbstractMatrixFactorization
 
 Element-wise Alternating Least Squares for implicit feedback recommendation.
 
-Implements the eALS algorithm from He et al. (2016) which uses popularity-based
+Implements the EALS algorithm from He et al. (2016) which uses popularity-based
 non-uniform weighting for missing data and coordinate-descent updates that are
 O(d) per element instead of O(d³) per user.
 
@@ -38,7 +38,7 @@ O(d) per element instead of O(d³) per user.
 
 # Constructor
 ```julia
-ElementwiseALS(; rank=64, λ=0.01, w0=1.0, max_iter=15, convergence_tol=0.005,
+EALS(; rank=64, λ=0.01, w0=1.0, max_iter=15, convergence_tol=0.005,
        popularity_exponent=0.5, verbose=true)
 ```
 
@@ -57,12 +57,12 @@ ElementwiseALS(; rank=64, λ=0.01, w0=1.0, max_iter=15, convergence_tol=0.005,
 using SparseArrays, Gideon
 
 X = sprand(1000, 500, 0.02)
-model = ElementwiseALS(rank=64, λ=0.01, w0=10.0, max_iter=20)
+model = EALS(rank=64, λ=0.01, w0=10.0, max_iter=20)
 fit!(model, X)
 preds = recommend(model, X; k=10)
 ```
 """
-mutable struct ElementwiseALS{T<:AbstractFloat} <: AbstractMatrixFactorization
+mutable struct EALS{T<:AbstractFloat} <: AbstractMatrixFactorization
     const rank::Int
     const λ::T
     const w0::T
@@ -78,7 +78,7 @@ mutable struct ElementwiseALS{T<:AbstractFloat} <: AbstractMatrixFactorization
     is_fitted::Bool
 end
 
-function ElementwiseALS(;
+function EALS(;
     rank::Int = 64,
     λ::Float64 = 0.01,
     w0::Float64 = 1.0,
@@ -93,7 +93,7 @@ function ElementwiseALS(;
     w0 > 0.0 || throw(ArgumentError("w0 must be positive, got $w0"))
     popularity_exponent >= 0.0 || throw(ArgumentError("popularity_exponent must be non-negative, got $popularity_exponent"))
     T = dtype
-    ElementwiseALS{T}(rank, T(λ), T(w0), max_iter, T(convergence_tol), T(popularity_exponent), verbose,
+    EALS{T}(rank, T(λ), T(w0), max_iter, T(convergence_tol), T(popularity_exponent), verbose,
             Matrix{T}(undef, 0, 0), Matrix{T}(undef, 0, 0), T[], false)
 end
 
@@ -102,14 +102,14 @@ end
 # ──────────────────────────────────────────────────────────────────────────────
 
 """
-    fit!(model::ElementwiseALS, X; rng, U_init, V_init) -> model
+    fit!(model::EALS, X; rng, U_init, V_init) -> model
 
-Fit eALS on sparse interaction matrix `X` (users × items).
+Fit EALS on sparse interaction matrix `X` (users × items).
 
 Uses element-wise coordinate descent with popularity-based non-uniform
 weighting for the missing (unobserved) entries.
 """
-function fit!(model::ElementwiseALS{T}, X::SparseMatrixCSC{Tv,Ti};
+function fit!(model::EALS{T}, X::SparseMatrixCSC{Tv,Ti};
               rng::AbstractRNG = Random.default_rng(),
               U_init::Union{Nothing,Matrix{T}} = nothing,
               V_init::Union{Nothing,Matrix{T}} = nothing,
@@ -174,12 +174,12 @@ function fit!(model::ElementwiseALS{T}, X::SparseMatrixCSC{Tv,Ti};
         total_seconds = elapsed_seconds(monitor)
 
         if model.verbose
-            log_iteration("eALS", iter, model.max_iter, Float64(loss),
+            log_iteration("EALS", iter, model.max_iter, Float64(loss),
                          iter_seconds, total_seconds)
         end
 
         if record!(monitor, loss)
-            model.verbose && @info "[eALS] converged at iteration $iter"
+            model.verbose && @info "[EALS] converged at iteration $iter"
             break
         end
 
@@ -194,12 +194,12 @@ function fit!(model::ElementwiseALS{T}, X::SparseMatrixCSC{Tv,Ti};
 end
 
 """
-    update!(model::ElementwiseALS, X; n_iter=1, rng) -> model
+    update!(model::EALS, X; n_iter=1, rng) -> model
 
 Incremental update: run additional iterations on new or updated data.
 Reuses existing factors as warm start.
 """
-function update!(model::ElementwiseALS{T}, X::SparseMatrixCSC{Tv,Ti};
+function update!(model::EALS{T}, X::SparseMatrixCSC{Tv,Ti};
                       n_iter::Int = 1,
                       rng::AbstractRNG = Random.default_rng()) where {T,Tv,Ti}
     if !model.is_fitted

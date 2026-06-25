@@ -53,16 +53,16 @@ export
     NegativeSampling, Uniform, Popular, Dynamic,
 
     # Models
-    WeightedMatrixFactorization,
-    ImplicitALS,
-    ElementwiseALS,
-    OnlineRegressor,
-    FactorizationMachine,
-    GlobalVectors,
-    LogisticMatrixFactorization,
-    BayesianPersonalizedRanking,
-    ShallowAutoencoder,
-    SparseLinearModel,
+    WMF,
+    IALS,
+    EALS,
+    FTRL,
+    FM,
+    GloVe,
+    LogisticMF,
+    BPR,
+    EASE,
+    SLIM,
     SoftImpute,
 
     # Generic API

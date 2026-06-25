@@ -1,12 +1,12 @@
 # ──────────────────────────────────────────────────────────────────────────────
-# BayesianPersonalizedRanking — Bayesian Personalized Ranking
+# BPR — Bayesian Personalized Ranking
 # ──────────────────────────────────────────────────────────────────────────────
 #
 # Reference: Rendle, Freudenthaler, Gantner, Schmidt-Thieme (2009)
-#   "BayesianPersonalizedRanking: Bayesian Personalized Ranking from Implicit Feedback" (UAI 2009)
+#   "BPR: Bayesian Personalized Ranking from Implicit Feedback" (UAI 2009)
 #   arXiv:1205.2618
 #
-# Optimizes the AUC-related BayesianPersonalizedRanking-Opt criterion:
+# Optimizes the AUC-related BPR-Opt criterion:
 #   Σ_{(u,i,j) ∈ D_S} ln σ(x̂_{uij}) - λ‖Θ‖²
 #
 # where x̂_{uij} = x̂_{ui} - x̂_{uj} (score difference between positive and
@@ -16,7 +16,7 @@
 # ──────────────────────────────────────────────────────────────────────────────
 
 """
-    BayesianPersonalizedRanking{T} <: AbstractMatrixFactorization
+    BPR{T} <: AbstractMatrixFactorization
 
 Bayesian Personalized Ranking via Matrix Factorization.
 
@@ -31,7 +31,7 @@ pointwise prediction. Uses SGD with negative sampling of (user, pos, neg) triple
 
 # Constructor
 ```julia
-BayesianPersonalizedRanking(; rank=64, λ_user=0.01, λ_pos=0.01, λ_neg=0.01,
+BPR(; rank=64, λ_user=0.01, λ_pos=0.01, λ_neg=0.01,
       learning_rate=0.05, max_iter=100, n_samples=0,
       negative_sampling=Uniform(), dns_candidates=5,
       convergence_tol=-1.0, verbose=true)
@@ -49,7 +49,7 @@ BayesianPersonalizedRanking(; rank=64, λ_user=0.01, λ_pos=0.01, λ_neg=0.01,
 - `dns_candidates::Int` — number of candidates for Dynamic() strategy
 - `convergence_tol::T` — AUC-based early stopping tolerance (-1 disables)
 """
-mutable struct BayesianPersonalizedRanking{T<:AbstractFloat} <: AbstractMatrixFactorization
+mutable struct BPR{T<:AbstractFloat} <: AbstractMatrixFactorization
     const rank::Int
     const λ_user::T
     const λ_pos::T
@@ -68,7 +68,7 @@ mutable struct BayesianPersonalizedRanking{T<:AbstractFloat} <: AbstractMatrixFa
     is_fitted::Bool
 end
 
-function BayesianPersonalizedRanking(;
+function BPR(;
     rank::Int = 64,
     λ_user::Float64 = 0.01,
     λ_pos::Float64 = 0.01,
@@ -86,7 +86,7 @@ function BayesianPersonalizedRanking(;
     learning_rate > 0.0 || throw(ArgumentError("learning_rate must be positive, got $learning_rate"))
     dns_candidates >= 1 || throw(ArgumentError("dns_candidates must be ≥ 1, got $dns_candidates"))
     T = dtype
-    BayesianPersonalizedRanking{T}(rank, T(λ_user), T(λ_pos), T(λ_neg), T(learning_rate), max_iter, n_samples,
+    BPR{T}(rank, T(λ_user), T(λ_pos), T(λ_neg), T(learning_rate), max_iter, n_samples,
             negative_sampling, dns_candidates, T(convergence_tol), verbose,
             Matrix{T}(undef,0,0), Matrix{T}(undef,0,0), T[], false)
 end
@@ -96,9 +96,9 @@ end
 # ──────────────────────────────────────────────────────────────────────────────
 
 """
-    fit!(model::BayesianPersonalizedRanking, X; rng) -> model
+    fit!(model::BPR, X; rng) -> model
 
-Fit BayesianPersonalizedRanking-MF on implicit feedback matrix `X` (users × items).
+Fit BPR-MF on implicit feedback matrix `X` (users × items).
 Non-zero entries are treated as positive interactions.
 
 Uses Hogwild!-style lock-free parallel SGD (Niu et al. 2011) for massive speedup
@@ -106,7 +106,7 @@ on multi-core systems. Each thread processes independent samples with concurrent
 writes to shared factor matrices — safe for sparse problems where collision
 probability is low.
 """
-function fit!(model::BayesianPersonalizedRanking{T}, X::SparseMatrixCSC{Tv,Ti};
+function fit!(model::BPR{T}, X::SparseMatrixCSC{Tv,Ti};
               rng::AbstractRNG = Random.default_rng(),
               callbacks::Vector{<:AbstractCallback} = AbstractCallback[]) where {T,Tv,Ti}
     n_users, n_items = size(X)
@@ -251,13 +251,13 @@ function fit!(model::BayesianPersonalizedRanking{T}, X::SparseMatrixCSC{Tv,Ti};
         if model.verbose
             total_correct = sum(epoch_correct)
             auc_pct = 100.0 * total_correct / samples_per_epoch
-            log_iteration("BayesianPersonalizedRanking", epoch, model.max_iter, Float64(avg_loss),
+            log_iteration("BPR", epoch, model.max_iter, Float64(avg_loss),
                          iter_seconds, total_seconds;
                          extra="auc≈$(round(auc_pct; digits=1))%")
         end
 
         if record!(monitor, avg_loss)
-            model.verbose && @info "[BayesianPersonalizedRanking] converged at epoch $epoch"
+            model.verbose && @info "[BPR] converged at epoch $epoch"
             break
         end
 

@@ -1,13 +1,13 @@
 # ──────────────────────────────────────────────────────────────────────────────
-# iALS — Implicit Alternating Least Squares with Subspace Optimization
+# IALS — Implicit Alternating Least Squares with Subspace Optimization
 # ──────────────────────────────────────────────────────────────────────────────
 #
 # References:
 #   - Hu, Koren, Volinsky (2008): "Collaborative Filtering for Implicit Feedback Datasets"
-#   - Rendle, Krichene, Zhang, Koren (2021): "iALS++: Speeding up Matrix Factorization
+#   - Rendle, Krichene, Zhang, Koren (2021): "IALS++: Speeding up Matrix Factorization
 #     with Subspace Optimization" (arXiv:2110.14044)
 #
-# Key insight from iALS++: Instead of solving the full d×d linear system per user/item,
+# Key insight from IALS++: Instead of solving the full d×d linear system per user/item,
 # use a subspace solver that operates on a smaller k-dimensional block, leveraging
 # the structure of the Gramian matrix that is shared across all users/items.
 #
@@ -18,7 +18,7 @@
 # ──────────────────────────────────────────────────────────────────────────────
 
 """
-    ImplicitALS{T} <: AbstractMatrixFactorization
+    IALS{T} <: AbstractMatrixFactorization
 
 Implicit Alternating Least Squares with efficient Gramian caching.
 
@@ -36,7 +36,7 @@ O(nnz_per_user × d² + d³) per user, which is dramatically faster for sparse d
 
 # Constructor
 ```julia
-ImplicitALS(; rank=64, λ=0.01, α=40.0, max_iter=15, convergence_tol=0.005,
+IALS(; rank=64, λ=0.01, α=40.0, max_iter=15, convergence_tol=0.005,
        solver=CholeskySolver(), cg_steps=3, verbose=true)
 ```
 
@@ -51,7 +51,7 @@ ImplicitALS(; rank=64, λ=0.01, α=40.0, max_iter=15, convergence_tol=0.005,
 - `user_factors::Matrix{T}` — (rank × n_users) after fitting
 - `item_factors::Matrix{T}` — (rank × n_items) after fitting
 """
-mutable struct ImplicitALS{T<:AbstractFloat} <: AbstractMatrixFactorization
+mutable struct IALS{T<:AbstractFloat} <: AbstractMatrixFactorization
     const rank::Int
     const λ::T
     const α::T
@@ -66,7 +66,7 @@ mutable struct ImplicitALS{T<:AbstractFloat} <: AbstractMatrixFactorization
     is_fitted::Bool
 end
 
-function ImplicitALS(;
+function IALS(;
     rank::Int = 64,
     λ::Float64 = 0.01,
     α::Float64 = 40.0,
@@ -80,10 +80,10 @@ function ImplicitALS(;
     rank >= 1 || throw(ArgumentError("rank must be ≥ 1, got $rank"))
     λ >= 0.0 || throw(ArgumentError("λ must be non-negative, got $λ"))
     α >= 0.0 || throw(ArgumentError("α must be non-negative, got $α"))
-    solver isa Union{CholeskySolver, ConjugateGradient} || throw(ArgumentError("ImplicitALS supports only CholeskySolver() or ConjugateGradient() solvers"))
+    solver isa Union{CholeskySolver, ConjugateGradient} || throw(ArgumentError("IALS supports only CholeskySolver() or ConjugateGradient() solvers"))
     cg_steps >= 1 || throw(ArgumentError("cg_steps must be ≥ 1, got $cg_steps"))
     T = dtype
-    ImplicitALS{T}(rank, T(λ), T(α), max_iter, T(convergence_tol), solver, cg_steps, verbose,
+    IALS{T}(rank, T(λ), T(α), max_iter, T(convergence_tol), solver, cg_steps, verbose,
             Matrix{T}(undef,0,0), Matrix{T}(undef,0,0), false)
 end
 
@@ -92,14 +92,14 @@ end
 # ──────────────────────────────────────────────────────────────────────────────
 
 """
-    fit!(model::ImplicitALS, X; rng, U_init, V_init) -> model
+    fit!(model::IALS, X; rng, U_init, V_init) -> model
 
-Fit iALS on sparse interaction matrix `X` (users × items).
+Fit IALS on sparse interaction matrix `X` (users × items).
 
 Uses the efficient Gramian-caching approach: precomputes `YᵀY` (or `XᵀX`) once
 per iteration, then adds per-user diagonal corrections from non-zero entries.
 """
-function fit!(model::ImplicitALS{T}, X::SparseMatrixCSC{Tv,Ti};
+function fit!(model::IALS{T}, X::SparseMatrixCSC{Tv,Ti};
               rng::AbstractRNG = Random.default_rng(),
               U_init::Union{Nothing,AbstractMatrix} = nothing,
               V_init::Union{Nothing,AbstractMatrix} = nothing,
@@ -176,12 +176,12 @@ function fit!(model::ImplicitALS{T}, X::SparseMatrixCSC{Tv,Ti};
         total_seconds = elapsed_seconds(monitor)
 
         if model.verbose
-            log_iteration("iALS", iter, model.max_iter, Float64(loss),
+            log_iteration("IALS", iter, model.max_iter, Float64(loss),
                          iter_seconds, total_seconds)
         end
 
         if record!(monitor, loss)
-            model.verbose && @info "[iALS] converged at iteration $iter"
+            model.verbose && @info "[IALS] converged at iteration $iter"
             break
         end
 

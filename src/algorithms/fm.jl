@@ -10,7 +10,7 @@
 # ──────────────────────────────────────────────────────────────────────────────
 
 """
-    FactorizationMachine{T} <: AbstractSparseRegression
+    FM{T} <: AbstractSparseRegression
 
 Second-order Factorization Machine trained via SGD with AdaGrad.
 
@@ -19,7 +19,7 @@ the `family` parameter. Uses per-coordinate adaptive learning rates (AdaGrad).
 
 # Constructor
 ```julia
-FactorizationMachine(; rank=4, learning_rate_w=0.2, learning_rate_v=learning_rate_w,
+FM(; rank=4, learning_rate_w=0.2, learning_rate_v=learning_rate_w,
                        λ_w=0.0, λ_v=0.0, family=Binomial(), intercept=true,
                        max_iter=10, convergence_tol=-1.0, verbose=true)
 ```
@@ -30,12 +30,12 @@ using SparseArrays, Gideon
 
 X = sprand(10000, 1000, 0.01)
 y = rand([0.0, 1.0], 10000)
-model = FactorizationMachine(rank=8, family=Binomial())
+model = FM(rank=8, family=Binomial())
 fit!(model, X, y)
 preds = predict(model, X)
 ```
 """
-mutable struct FactorizationMachine{T<:AbstractFloat} <: AbstractSparseRegression
+mutable struct FM{T<:AbstractFloat} <: AbstractSparseRegression
     const rank::Int
     learning_rate_w::T
     learning_rate_v::T
@@ -55,7 +55,7 @@ mutable struct FactorizationMachine{T<:AbstractFloat} <: AbstractSparseRegressio
     is_initialized::Bool
 end
 
-function FactorizationMachine(;
+function FM(;
     rank::Int = 4,
     learning_rate_w::Float64 = 0.2,
     learning_rate_v::Float64 = learning_rate_w,
@@ -69,7 +69,7 @@ function FactorizationMachine(;
 )
     rank >= 1 || throw(ArgumentError("rank must be ≥ 1, got $rank"))
     family isa Union{Binomial, Gaussian} || throw(ArgumentError("FM supports Binomial() or Gaussian() families"))
-    FactorizationMachine{Float64}(
+    FM{Float64}(
         rank, learning_rate_w, learning_rate_v, λ_w, λ_v, family, intercept,
         max_iter, convergence_tol, verbose,
         0, 0.0, Float64[], Matrix{Float64}(undef,0,0),
@@ -82,11 +82,11 @@ end
 # ──────────────────────────────────────────────────────────────────────────────
 
 """
-    update!(model::FactorizationMachine, X, y; weights, rng) -> model
+    update!(model::FM, X, y; weights, rng) -> model
 
 Run a single SGD epoch over the data.
 """
-function update!(model::FactorizationMachine{T}, X::SparseMatrixCSC{Tv,Ti},
+function update!(model::FM{T}, X::SparseMatrixCSC{Tv,Ti},
                       y::AbstractVector;
                       weights::AbstractVector{T} = ones(T, length(y)),
                       rng::AbstractRNG = Random.default_rng()) where {T,Tv,Ti}
@@ -184,11 +184,11 @@ function update!(model::FactorizationMachine{T}, X::SparseMatrixCSC{Tv,Ti},
 end
 
 """
-    fit!(model::FactorizationMachine, X, y; kwargs...) -> model
+    fit!(model::FM, X, y; kwargs...) -> model
 
 Train the FM for `model.max_iter` epochs.
 """
-function fit!(model::FactorizationMachine{T}, X::SparseMatrixCSC, y::AbstractVector;
+function fit!(model::FM{T}, X::SparseMatrixCSC, y::AbstractVector;
               kwargs...) where {T}
     train_start = time_ns()
     prev_loss = T(Inf)
@@ -228,13 +228,13 @@ end
 # ──────────────────────────────────────────────────────────────────────────────
 
 """
-    predict(model::FactorizationMachine, X) -> Vector
+    predict(model::FM, X) -> Vector
 
 Generate predictions. Output depends on family:
 - `Binomial()` → probabilities in [0,1]
 - `Gaussian()` → real-valued predictions
 """
-function predict(model::FactorizationMachine{T}, X::SparseMatrixCSC) where {T}
+function predict(model::FM{T}, X::SparseMatrixCSC) where {T}
     model.is_initialized || error("Model not fitted")
     n_samples = size(X, 1)
     size(X, 2) == model.n_features || throw(DimensionMismatch("Feature dimension mismatch: expected $(model.n_features), got $(size(X, 2))"))

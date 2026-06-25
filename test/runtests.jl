@@ -14,34 +14,34 @@ using Pkg
     @testset "Types & Utils" begin
         include("test_utils.jl")
     end
-    @testset "WeightedMatrixFactorization" begin
+    @testset "WMF" begin
         include("test_wrmf.jl")
     end
-    @testset "iALS" begin
+    @testset "IALS" begin
         include("test_ials.jl")
     end
-    @testset "eALS" begin
+    @testset "EALS" begin
         include("test_eals.jl")
     end
-    @testset "OnlineRegressor" begin
+    @testset "FTRL" begin
         include("test_ftrl.jl")
     end
     @testset "FM" begin
         include("test_fm.jl")
     end
-    @testset "GlobalVectors" begin
+    @testset "GloVe" begin
         include("test_glove.jl")
     end
-    @testset "LogisticMatrixFactorization" begin
+    @testset "LogisticMF" begin
         include("test_lmf.jl")
     end
-    @testset "BayesianPersonalizedRanking" begin
+    @testset "BPR" begin
         include("test_bpr.jl")
     end
-    @testset "ShallowAutoencoder" begin
+    @testset "EASE" begin
         include("test_ease.jl")
     end
-    @testset "SparseLinearModel" begin
+    @testset "SLIM" begin
         include("test_slim.jl")
     end
     @testset "SoftImpute" begin

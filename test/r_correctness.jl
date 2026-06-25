@@ -59,7 +59,7 @@ function _cor(x::Vector{Float64}, y::Vector{Float64})
     dot(dx, dy) / (sqrt(dot(dx, dx) * dot(dy, dy)) + 1e-15)
 end
 
-# ── Observed-entry implicit WeightedMatrixFactorization loss (mirrors Julia's _compute_loss) ─────────
+# ── Observed-entry implicit WMF loss (mirrors Julia's _compute_loss) ─────────
 function _wrmf_loss(U::Matrix{Float64}, V::Matrix{Float64},
                     X::SparseMatrixCSC, λ::Float64, α::Float64)
     rv = rowvals(X); nz = nonzeros(X); loss = 0.0
@@ -77,8 +77,8 @@ end
 
 @testset "Tier 1 — Mathematical Correctness" begin
 
-    # ── WeightedMatrixFactorization ──────────────────────────────────────────────────────────────────
-    @testset "WeightedMatrixFactorization" begin
+    # ── WMF ──────────────────────────────────────────────────────────────────
+    @testset "WMF" begin
         rng = MersenneTwister(42)
         X   = sprand(rng, 60, 50, 0.15)
         λ   = 0.1; α = 1.0
@@ -86,7 +86,7 @@ end
         @testset "CholeskySolver: loss is monotonically non-increasing" begin
             losses = Float64[]
             for n_iter in [2, 5, 15, 30]
-                m = WeightedMatrixFactorization(rank=4, λ=λ, α=α, max_iter=n_iter,
+                m = WMF(rank=4, λ=λ, α=α, max_iter=n_iter,
                          solver=CholeskySolver(), feedback=IMPLICIT)
                 fit!(m, X; rng=MersenneTwister(1), convergence_tol=-1.0)
                 push!(losses, _wrmf_loss(m.user_factors, m.item_factors, X, λ, α))
@@ -97,9 +97,9 @@ end
         end
 
         @testset "CG: loss decreases with more iterations" begin
-            m_early = WeightedMatrixFactorization(rank=4, λ=λ, α=α, max_iter=2,
+            m_early = WMF(rank=4, λ=λ, α=α, max_iter=2,
                            solver=ConjugateGradient(), cg_steps=20, feedback=IMPLICIT)
-            m_conv  = WeightedMatrixFactorization(rank=4, λ=λ, α=α, max_iter=30,
+            m_conv  = WMF(rank=4, λ=λ, α=α, max_iter=30,
                            solver=ConjugateGradient(), cg_steps=20, feedback=IMPLICIT)
             fit!(m_early, X; rng=MersenneTwister(1), convergence_tol=-1.0)
             fit!(m_conv,  X; rng=MersenneTwister(1), convergence_tol=-1.0)
@@ -111,9 +111,9 @@ end
         @testset "CholeskySolver ≈ CG at convergence (same unique minimum)" begin
             # Both solvers minimise the same strongly convex sub-problem per row →
             # they converge to the same (unique) global ALS fixed-point.
-            m_chol = WeightedMatrixFactorization(rank=4, λ=λ, α=α, max_iter=100,
+            m_chol = WMF(rank=4, λ=λ, α=α, max_iter=100,
                           solver=CholeskySolver(), feedback=IMPLICIT)
-            m_cg   = WeightedMatrixFactorization(rank=4, λ=λ, α=α, max_iter=100,
+            m_cg   = WMF(rank=4, λ=λ, α=α, max_iter=100,
                           solver=ConjugateGradient(), cg_steps=50, feedback=IMPLICIT)
             fit!(m_chol, X; rng=MersenneTwister(7), convergence_tol=1e-7)
             fit!(m_cg,   X; rng=MersenneTwister(7), convergence_tol=1e-7)
@@ -124,7 +124,7 @@ end
         end
 
         @testset "NonNegative: all factor entries non-negative" begin
-            m = WeightedMatrixFactorization(rank=4, λ=λ, α=α, max_iter=10, solver=NonNegative(), feedback=IMPLICIT)
+            m = WMF(rank=4, λ=λ, α=α, max_iter=10, solver=NonNegative(), feedback=IMPLICIT)
             fit!(m, X; rng=MersenneTwister(1))
             @test all(m.user_factors .>= -1e-12)
             @test all(m.item_factors .>= -1e-12)
@@ -132,12 +132,12 @@ end
 
         @testset "NonNegative warm-start via U_init / V_init" begin
             # Initialise NonNegative from abs of a converged CholeskySolver solution
-            m_chol = WeightedMatrixFactorization(rank=4, λ=λ, α=α, max_iter=20, solver=CholeskySolver())
+            m_chol = WMF(rank=4, λ=λ, α=α, max_iter=20, solver=CholeskySolver())
             fit!(m_chol, X; rng=MersenneTwister(1))
             U_warm = abs.(m_chol.user_factors)
             V_warm = abs.(m_chol.item_factors)
 
-            m_nnls = WeightedMatrixFactorization(rank=4, λ=λ, α=α, max_iter=20, solver=NonNegative())
+            m_nnls = WMF(rank=4, λ=λ, α=α, max_iter=20, solver=NonNegative())
             fit!(m_nnls, X; rng=MersenneTwister(1),
                  U_init=U_warm, V_init=V_warm)
             @test all(m_nnls.user_factors .>= -1e-12)
@@ -156,7 +156,7 @@ end
             V = vcat(5.0*ones(50),            ones(30))
             X2 = sparse(I, J, V, 30, 40)
 
-            m2 = WeightedMatrixFactorization(rank=5, λ=0.01, α=10.0, max_iter=20, solver=CholeskySolver())
+            m2 = WMF(rank=5, λ=0.01, α=10.0, max_iter=20, solver=CholeskySolver())
             fit!(m2, X2; rng=rng2)
 
             preds = predict(m2, X2; k=5)
@@ -167,7 +167,7 @@ end
         end
 
         @testset "transform: new users get valid factor matrix" begin
-            m = WeightedMatrixFactorization(rank=4, λ=λ, α=α, max_iter=10, solver=CholeskySolver())
+            m = WMF(rank=4, λ=λ, α=α, max_iter=10, solver=CholeskySolver())
             fit!(m, X; rng=MersenneTwister(1))
             X_new  = sprand(MersenneTwister(3), 7, size(X, 2), 0.15)
             U_new  = transform(m, X_new)
@@ -179,7 +179,7 @@ end
         @testset "Explicit feedback: MSE < 1 on training data" begin
             rng3 = MersenneTwister(5)
             X_ex = sprand(rng3, 40, 30, 0.2)
-            m_ex = WeightedMatrixFactorization(rank=4, λ=0.1, α=1.0, max_iter=20,
+            m_ex = WMF(rank=4, λ=0.1, α=1.0, max_iter=20,
                         solver=CholeskySolver(), feedback=EXPLICIT)
             fit!(m_ex, X_ex; rng=rng3)
             rv = rowvals(X_ex); nz = nonzeros(X_ex); mse = 0.0
@@ -193,8 +193,8 @@ end
         end
     end
 
-    # ── OnlineRegressor ──────────────────────────────────────────────────────────────────
-    @testset "OnlineRegressor" begin
+    # ── FTRL ──────────────────────────────────────────────────────────────────
+    @testset "FTRL" begin
         rng = MersenneTwister(42)
         n, p = 500, 100
         Xf  = sprand(rng, n, p, 0.1)
@@ -206,29 +206,29 @@ end
             (1 .- label) .* log.(1 .- pred .+ 1e-10)) / length(label)
 
         @testset "Loss decreases with more epochs" begin
-            m1 = OnlineRegressor(learning_rate=0.1, λ=0.01, l1_ratio=0.5)
+            m1 = FTRL(learning_rate=0.1, λ=0.01, l1_ratio=0.5)
             partial_fit!(m1, Xf, y; rng=MersenneTwister(1))
-            m5 = OnlineRegressor(learning_rate=0.1, λ=0.01, l1_ratio=0.5)
+            m5 = FTRL(learning_rate=0.1, λ=0.01, l1_ratio=0.5)
             for _ in 1:5; partial_fit!(m5, Xf, y; rng=MersenneTwister(1)); end
             @test logloss(predict(m5, Xf), y) < logloss(predict(m1, Xf), y)
         end
 
         @testset "L1 regularization zeroes some weights" begin
-            m_l1 = OnlineRegressor(learning_rate=0.1, λ=2.0, l1_ratio=1.0)
+            m_l1 = FTRL(learning_rate=0.1, λ=2.0, l1_ratio=1.0)
             for _ in 1:5; partial_fit!(m_l1, Xf, y); end
             nnz_w = sum(abs.(coef(m_l1)) .> 1e-10)
             @test nnz_w < p   # strong L1 must zero at least one weight
         end
 
         @testset "Predictions are in [0, 1]" begin
-            m = OnlineRegressor(learning_rate=0.1, λ=0.01, l1_ratio=0.5)
+            m = FTRL(learning_rate=0.1, λ=0.01, l1_ratio=0.5)
             partial_fit!(m, Xf, y)
             preds = predict(m, Xf)
             @test all(0.0 .<= preds .<= 1.0)
         end
 
         @testset "partial_fit! updates weights each epoch" begin
-            m = OnlineRegressor(learning_rate=0.1)
+            m = FTRL(learning_rate=0.1)
             partial_fit!(m, Xf, y)
             w1 = copy(coef(m))
             partial_fit!(m, Xf, y)
@@ -243,7 +243,7 @@ end
             y = [0.0, 1.0, 1.0, 0.0]
             n_correct = 0
             for seed in 1:5
-                m = FactorizationMachine(
+                m = FM(
                     learning_rate_w=10.0, rank=2, max_iter=200,
                     λ_w=0.0, λ_v=0.0, family=:binomial, intercept=true)
                 fit!(m, x, y; rng=MersenneTwister(seed))
@@ -259,22 +259,22 @@ end
             yg  = randn(rng, 100)
             mse(m) = sum((predict(m, Xg) .- yg).^2) / length(yg)
 
-            m5  = FactorizationMachine(rank=5, family=:gaussian, learning_rate_w=0.01, max_iter=5)
-            m50 = FactorizationMachine(rank=5, family=:gaussian, learning_rate_w=0.01, max_iter=50)
+            m5  = FM(rank=5, family=:gaussian, learning_rate_w=0.01, max_iter=5)
+            m50 = FM(rank=5, family=:gaussian, learning_rate_w=0.01, max_iter=50)
             fit!(m5,  Xg, yg; rng=MersenneTwister(1))
             fit!(m50, Xg, yg; rng=MersenneTwister(1))
             @test mse(m50) < mse(m5)
         end
     end
 
-    # ── GlobalVectors ─────────────────────────────────────────────────────────────────
-    @testset "GlobalVectors" begin
+    # ── GloVe ─────────────────────────────────────────────────────────────────
+    @testset "GloVe" begin
         @testset "Cost is generally decreasing (≥ 15/19 steps)" begin
             rng = MersenneTwister(42)
             n   = 80
             A   = sprand(rng, n, n, 0.1); A = A + A'
             nonzeros(A) .= abs.(nonzeros(A)) .+ 0.1
-            m = GlobalVectors(rank=5, x_max=10.0, learning_rate=0.15, max_iter=20)
+            m = GloVe(rank=5, x_max=10.0, learning_rate=0.15, max_iter=20)
             fit!(m, A; rng=rng)
             @test length(m.loss_history) == 20
             @test sum(diff(m.loss_history) .< 0) >= 15
@@ -285,7 +285,7 @@ end
             n   = 60
             A   = sprand(rng, n, n, 0.15); A = A + A'
             nonzeros(A) .= abs.(nonzeros(A)) .+ 0.1
-            m = GlobalVectors(rank=8, x_max=10.0, learning_rate=0.15, max_iter=30)
+            m = GloVe(rank=8, x_max=10.0, learning_rate=0.15, max_iter=30)
             fit!(m, A; rng=rng)
             emb = embeddings(m)
             @test all(isfinite, emb)
@@ -300,7 +300,7 @@ end
                      [j for i in 11:20 for j in i+1:20])
             V = fill(5.0, length(I))
             A = sparse(vcat(I,J), vcat(J,I), vcat(V,V), 20, 20)
-            m = GlobalVectors(rank=4, x_max=10.0, learning_rate=0.15, max_iter=50)
+            m = GloVe(rank=4, x_max=10.0, learning_rate=0.15, max_iter=50)
             fit!(m, A; rng=MersenneTwister(1))
             emb = embeddings(m)
             vcos(a, b) = dot(a, b) / (norm(a)*norm(b) + 1e-8)
@@ -357,11 +357,11 @@ end
         end
     end
 
-    # ── LogisticMatrixFactorization ───────────────────────────────────────────────────────────────────
-    @testset "LogisticMatrixFactorization" begin
+    # ── LogisticMF ───────────────────────────────────────────────────────────────────
+    @testset "LogisticMF" begin
         rng = MersenneTwister(42)
         Xl  = sprand(rng, 60, 50, 0.08)
-        m   = LogisticMatrixFactorization(rank=5, λ=0.01, learning_rate=0.01, max_iter=20)
+        m   = LogisticMF(rank=5, λ=0.01, learning_rate=0.01, max_iter=20)
         fit!(m, Xl; rng=rng)
 
         @testset "Factors are finite" begin
@@ -423,10 +423,10 @@ if isdir(FIXTURE_DIR) && isfile(joinpath(FIXTURE_DIR, "wrmf_chol_loss.txt"))
                               joinpath(FIXTURE_DIR, "X_small_dims.csv"))
         RANK  = 5; λ_r = 0.1; α_r = 1.0
 
-        # ── WeightedMatrixFactorization CholeskySolver vs R ─────────────────────────────────────────────────
-        @testset "WeightedMatrixFactorization CholeskySolver: converged loss ≤ R × 1.10" begin
+        # ── WMF CholeskySolver vs R ─────────────────────────────────────────────────
+        @testset "WMF CholeskySolver: converged loss ≤ R × 1.10" begin
             r_loss = _read_scalar(joinpath(FIXTURE_DIR, "wrmf_chol_loss.txt"))
-            m = WeightedMatrixFactorization(rank=RANK, λ=λ_r, α=α_r, max_iter=50,
+            m = WMF(rank=RANK, λ=λ_r, α=α_r, max_iter=50,
                      solver=CholeskySolver(), feedback=IMPLICIT)
             fit!(m, X_ref; rng=MersenneTwister(42), convergence_tol=1e-6)
             jl_loss = _wrmf_loss(m.user_factors, m.item_factors, X_ref, λ_r, α_r)
@@ -434,7 +434,7 @@ if isdir(FIXTURE_DIR) && isfile(joinpath(FIXTURE_DIR, "wrmf_chol_loss.txt"))
             @test jl_loss <= r_loss * 1.10
         end
 
-        @testset "WeightedMatrixFactorization CholeskySolver: one iteration from R factors does not increase loss" begin
+        @testset "WMF CholeskySolver: one iteration from R factors does not increase loss" begin
             # Load R's converged factors; one more ALS step should not worsen them.
             U_raw = _read_matrix(joinpath(FIXTURE_DIR, "wrmf_chol_user.csv"))  # n_u × rank
             V_raw = _read_matrix(joinpath(FIXTURE_DIR, "wrmf_chol_item.csv"))  # rank × n_i
@@ -446,7 +446,7 @@ if isdir(FIXTURE_DIR) && isfile(joinpath(FIXTURE_DIR, "wrmf_chol_loss.txt"))
             r_scores = U_r' * V_r
             @test size(r_scores) == (100, 80)
 
-            m_warmstart = WeightedMatrixFactorization(rank=RANK, λ=λ_r, α=α_r, max_iter=1,
+            m_warmstart = WMF(rank=RANK, λ=λ_r, α=α_r, max_iter=1,
                                solver=CholeskySolver(), feedback=IMPLICIT)
             fit!(m_warmstart, X_ref; rng=MersenneTwister(1),
                  U_init=U_r, V_init=V_r)
@@ -456,10 +456,10 @@ if isdir(FIXTURE_DIR) && isfile(joinpath(FIXTURE_DIR, "wrmf_chol_loss.txt"))
             @test jl_loss_ws <= r_loss * 1.10
         end
 
-        # ── WeightedMatrixFactorization CG vs R ──────────────────────────────────────────────────────
-        @testset "WeightedMatrixFactorization CG: converged loss ≤ R × 1.10" begin
+        # ── WMF CG vs R ──────────────────────────────────────────────────────
+        @testset "WMF CG: converged loss ≤ R × 1.10" begin
             r_loss_cg = _read_scalar(joinpath(FIXTURE_DIR, "wrmf_cg_loss.txt"))
-            m_cg = WeightedMatrixFactorization(rank=RANK, λ=λ_r, α=α_r, max_iter=50,
+            m_cg = WMF(rank=RANK, λ=λ_r, α=α_r, max_iter=50,
                         solver=ConjugateGradient(), cg_steps=10, feedback=IMPLICIT)
             fit!(m_cg, X_ref; rng=MersenneTwister(42), convergence_tol=1e-6)
             jl_loss_cg = _wrmf_loss(m_cg.user_factors, m_cg.item_factors,
@@ -468,15 +468,15 @@ if isdir(FIXTURE_DIR) && isfile(joinpath(FIXTURE_DIR, "wrmf_chol_loss.txt"))
             @test jl_loss_cg <= r_loss_cg * 1.10
         end
 
-        # ── OnlineRegressor vs R ─────────────────────────────────────────────────────────
-        @testset "OnlineRegressor: weights and predictions match R exactly" begin
+        # ── FTRL vs R ─────────────────────────────────────────────────────────
+        @testset "FTRL: weights and predictions match R exactly" begin
             X_ftrl  = _load_sparse(joinpath(FIXTURE_DIR, "X_ftrl.csv"),
                                    joinpath(FIXTURE_DIR, "X_ftrl_dims.csv"))
             y_ftrl  = _read_col(joinpath(FIXTURE_DIR, "y_ftrl.csv"), "y")
             r_w     = _read_col(joinpath(FIXTURE_DIR, "ftrl_weights.csv"), "w")
             r_preds = _read_col(joinpath(FIXTURE_DIR, "ftrl_preds.csv"), "p")
 
-            m_ftrl = OnlineRegressor(learning_rate=0.1, learning_rate_decay=0.5,
+            m_ftrl = FTRL(learning_rate=0.1, learning_rate_decay=0.5,
                           λ=0.01, l1_ratio=0.5)
             for _ in 1:5
                 partial_fit!(m_ftrl, X_ftrl, y_ftrl; rng=MersenneTwister(42))
@@ -484,7 +484,7 @@ if isdir(FIXTURE_DIR) && isfile(joinpath(FIXTURE_DIR, "wrmf_chol_loss.txt"))
             jl_w = coef(m_ftrl)
             jl_p = predict(m_ftrl, X_ftrl)
 
-            # OnlineRegressor is deterministic given same data order → should match exactly
+            # FTRL is deterministic given same data order → should match exactly
             @test _cor(jl_w, r_w) >= 0.999
             @test _cor(jl_p, r_preds) >= 0.999
 
@@ -502,7 +502,7 @@ if isdir(FIXTURE_DIR) && isfile(joinpath(FIXTURE_DIR, "wrmf_chol_loss.txt"))
             y_xor = [0.0, 1.0, 1.0, 0.0]
             agreements = 0
             for seed in 1:5
-                m = FactorizationMachine(
+                m = FM(
                     learning_rate_w=10.0, rank=2, max_iter=200,
                     λ_w=0.0, λ_v=0.0, family=:binomial, intercept=true)
                 fit!(m, x_xor, y_xor; rng=MersenneTwister(seed))
@@ -513,12 +513,12 @@ if isdir(FIXTURE_DIR) && isfile(joinpath(FIXTURE_DIR, "wrmf_chol_loss.txt"))
             @test agreements >= 4
         end
 
-        # ── GlobalVectors vs R ────────────────────────────────────────────────────────
-        @testset "GlobalVectors: Julia final cost ≤ R cost × 3.0" begin
+        # ── GloVe vs R ────────────────────────────────────────────────────────
+        @testset "GloVe: Julia final cost ≤ R cost × 3.0" begin
             r_cost  = _read_scalar(joinpath(FIXTURE_DIR, "glove_final_cost.txt"))
             X_glove = _load_sparse(joinpath(FIXTURE_DIR, "glove_X.csv"),
                                    joinpath(FIXTURE_DIR, "glove_dims.csv"))
-            m_glove = GlobalVectors(rank=5, x_max=10.0, learning_rate=0.15, max_iter=30)
+            m_glove = GloVe(rank=5, x_max=10.0, learning_rate=0.15, max_iter=30)
             fit!(m_glove, X_glove; rng=MersenneTwister(42))
             jl_cost = last(m_glove.loss_history)
             @test isfinite(jl_cost)

@@ -110,7 +110,7 @@ def benchmark_bpr(X_train, X_test, rank=64, n_iter=50, lr=0.05, reg=0.01):
     print(f"BPR — rank={rank}, iters={n_iter}, lr={lr}")
     print("-" * 70)
 
-    model = implicit.bpr.BayesianPersonalizedRanking(
+    model = implicit.bpr.BPR(
         factors=rank, regularization=reg, learning_rate=lr,
         iterations=n_iter, use_gpu=False, random_state=42
     )
