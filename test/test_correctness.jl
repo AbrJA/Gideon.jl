@@ -16,7 +16,7 @@
 #   · Multiple RNG seeds work reliably
 #   · Multiple updates remain stable
 #
-# For reference-based validation (R comparison), see validation/compare_with_r.jl
+# For reference-based validation (R comparison), see validation/validate_r.jl
 # ─────────────────────────────────────────────────────────────────────────────
 
 using Gideon, SparseArrays, LinearAlgebra, Random

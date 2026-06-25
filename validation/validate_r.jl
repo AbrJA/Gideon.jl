@@ -1,18 +1,18 @@
-# validation/compare_with_r.jl
+# validation/validate_r.jl
 # Reference validation against R implementations (optional, run locally as needed)
 # ─────────────────────────────────────────────────────────────────────────────
 # This script validates Gideon.jl algorithms against R reference implementations.
 # Run this locally when validating changes and performance.
 #
 # Prerequisites:
-#   1. Generate fixtures: cd .. && Rscript test/generate_fixtures.R
-#   2. Run this script: julia --project=.. validation/compare_with_r.jl
+#   1. Generate fixtures: Rscript validation/fixtures_r.R
+#   2. Run this script: julia --project=. validation/validate_r.jl
 # ─────────────────────────────────────────────────────────────────────────────
 
-using Gideon, SparseArrays, LinearAlgebra, Random, Statistics
+using Gideon, SparseArrays, LinearAlgebra, Random
 using Test
 
-const FIXTURE_DIR = joinpath(@__DIR__, "..", "test", "fixtures")
+const FIXTURE_DIR = get(ENV, "GIDEON_R_FIXTURE_DIR", "/tmp/gideon_fixtures")
 
 # ── Helpers for R fixture loading ─────────────────────────────────────────────
 
@@ -71,6 +71,31 @@ function _wrmf_loss_ref(U::Matrix{Float64}, V::Matrix{Float64},
     loss + λ * (sum(abs2, U) + sum(abs2, V))
 end
 
+_all_files_exist(paths::Vector{String}) = all(isfile, paths)
+
+function _print_rsparse_capabilities_if_present()
+    cap_path = joinpath(FIXTURE_DIR, "rsparse_capabilities.csv")
+    isfile(cap_path) || return
+    lines = readlines(cap_path)
+    length(lines) <= 1 && return
+    println("  rsparse capabilities (from fixtures):")
+    for line in lines[2:end]
+        isempty(strip(line)) && continue
+        cols = split(strip(line), ',')
+        # Supports both [model,available] and [rowid,model,available] CSV layouts.
+        if length(cols) >= 3
+            model = strip(cols[end - 1], '"')
+            available = strip(cols[end], '"') == "1" ? "yes" : "no"
+        elseif length(cols) == 2
+            model = strip(cols[1], '"')
+            available = strip(cols[2], '"') == "1" ? "yes" : "no"
+        else
+            continue
+        end
+        println("    - ", model, ": ", available)
+    end
+end
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # TIER 4 — R Reference Validation
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -81,8 +106,7 @@ end
         @warn """
         Fixtures not found at: $FIXTURE_DIR
         To generate fixtures:
-          cd $(dirname(dirname(@__DIR__)))
-          Rscript test/generate_fixtures.R
+                    Rscript validation/fixtures_r.R
         """
         return
     end
@@ -95,15 +119,16 @@ end
           - wrmf_cg_loss.txt
           - X_small.csv, X_small_dims.csv
           - ftrl_*.csv, y_ftrl.csv
-          - fm_xor_preds.csv
           - glove_*.csv, glove_final_cost.txt
           - metrics_ref.csv
         """
         return
     end
 
+    _print_rsparse_capabilities_if_present()
+
     X_ref = _load_sparse(joinpath(FIXTURE_DIR, "X_small.csv"),
-                          joinpath(FIXTURE_DIR, "X_small_dims.csv"))
+                         joinpath(FIXTURE_DIR, "X_small_dims.csv"))
     RANK = 5; λ_r = 0.1; α_r = 1.0
 
     @testset "WMF CholeskySolver: loss ≤ R × 1.05" begin
@@ -145,71 +170,101 @@ end
     end
 
     @testset "FTRL: weights and predictions match R (tight)" begin
-        X_ftrl = _load_sparse(joinpath(FIXTURE_DIR, "X_ftrl.csv"),
-                               joinpath(FIXTURE_DIR, "X_ftrl_dims.csv"))
-        y_ftrl = _read_col(joinpath(FIXTURE_DIR, "y_ftrl.csv"), "y")
-        r_w = _read_col(joinpath(FIXTURE_DIR, "ftrl_weights.csv"), "w")
-        r_preds = _read_col(joinpath(FIXTURE_DIR, "ftrl_preds.csv"), "p")
+        ftrl_files = [
+            joinpath(FIXTURE_DIR, "X_ftrl.csv"),
+            joinpath(FIXTURE_DIR, "X_ftrl_dims.csv"),
+            joinpath(FIXTURE_DIR, "y_ftrl.csv"),
+            joinpath(FIXTURE_DIR, "ftrl_weights.csv"),
+            joinpath(FIXTURE_DIR, "ftrl_preds.csv"),
+        ]
+        if _all_files_exist(ftrl_files)
+            X_ftrl = _load_sparse(joinpath(FIXTURE_DIR, "X_ftrl.csv"),
+                                  joinpath(FIXTURE_DIR, "X_ftrl_dims.csv"))
+            y_ftrl = _read_col(joinpath(FIXTURE_DIR, "y_ftrl.csv"), "y")
+            r_w = _read_col(joinpath(FIXTURE_DIR, "ftrl_weights.csv"), "w")
+            r_preds = _read_col(joinpath(FIXTURE_DIR, "ftrl_preds.csv"), "p")
 
-        m_ftrl = FTRL(learning_rate=0.1, learning_rate_decay=0.5,
-                      λ=0.01, l1_ratio=0.5, verbose=false)
-        for _ in 1:5
-            update!(m_ftrl, X_ftrl, y_ftrl; rng=MersenneTwister(42))
+            m_ftrl = FTRL(learning_rate=0.1, learning_rate_decay=0.5,
+                          λ=0.01, l1_ratio=0.5, verbose=false)
+            for _ in 1:5
+                update!(m_ftrl, X_ftrl, y_ftrl; rng=MersenneTwister(42))
+            end
+            jl_w = coef(m_ftrl)
+            jl_p = predict(m_ftrl, X_ftrl)
+
+            cor_w = _cor(jl_w, r_w)
+            cor_p = _cor(jl_p, r_preds)
+            @test cor_w >= 0.9995
+            @test cor_p >= 0.9995
+            println("  FTRL weights correlation: $cor_w")
+            println("  FTRL predictions correlation: $cor_p")
+        else
+            @info "Skipping FTRL comparison: one or more fixture files are missing"
         end
-        jl_w = coef(m_ftrl)
-        jl_p = predict(m_ftrl, X_ftrl)
-
-        cor_w = _cor(jl_w, r_w)
-        cor_p = _cor(jl_p, r_preds)
-        @test cor_w >= 0.9995
-        @test cor_p >= 0.9995
-        println("  FTRL weights correlation: $cor_w")
-        println("  FTRL predictions correlation: $cor_p")
     end
 
-    @testset "FM XOR: Julia matches R" begin
-        r_preds_fm = _read_col(joinpath(FIXTURE_DIR, "fm_xor_preds.csv"), "p")
-        x_xor = sparse([0.0 0.0; 0.0 1.0; 1.0 0.0; 1.0 1.0])
-        y_xor = [0.0, 1.0, 1.0, 0.0]
-        agreements = 0
-        r_correct = r_preds_fm[1] < 0.3 && r_preds_fm[4] < 0.3 &&
-                    r_preds_fm[2] > 0.7 && r_preds_fm[3] > 0.7
-        for seed in 1:5
-            m = FM(
-                learning_rate_w=10.0, rank=2, max_iter=200,
-                λ_w=0.0, λ_v=0.0, family=Binomial(), intercept=true, verbose=false)
-            fit!(m, x_xor, y_xor; rng=MersenneTwister(seed))
-            p = predict(m, x_xor)
-            j_correct = p[1] < 0.3 && p[4] < 0.3 && p[2] > 0.7 && p[3] > 0.7
-            agreements += (j_correct && r_correct) || (!j_correct && !r_correct)
+    @testset "FM XOR: Julia matches R (optional)" begin
+        fm_path = joinpath(FIXTURE_DIR, "fm_xor_preds.csv")
+        if isfile(fm_path)
+            r_preds_fm = _read_col(fm_path, "p")
+            x_xor = sparse([0.0 0.0; 0.0 1.0; 1.0 0.0; 1.0 1.0])
+            y_xor = [0.0, 1.0, 1.0, 0.0]
+            agreements = 0
+            r_correct = r_preds_fm[1] < 0.3 && r_preds_fm[4] < 0.3 &&
+                        r_preds_fm[2] > 0.7 && r_preds_fm[3] > 0.7
+            for seed in 1:5
+                m = FM(
+                    learning_rate_w=10.0, rank=2, max_iter=200,
+                    λ_w=0.0, λ_v=0.0, family=Binomial(), intercept=true, verbose=false)
+                fit!(m, x_xor, y_xor; rng=MersenneTwister(seed))
+                p = predict(m, x_xor)
+                j_correct = p[1] < 0.3 && p[4] < 0.3 && p[2] > 0.7 && p[3] > 0.7
+                agreements += (j_correct && r_correct) || (!j_correct && !r_correct)
+            end
+            @test agreements >= 4
+            println("  FM XOR: $agreements/5 seeds agree with R")
+        else
+            @info "Skipping FM XOR comparison: fixture missing (rsparse::FM may be unavailable)"
         end
-        @test agreements >= 4
-        println("  FM XOR: $agreements/5 seeds agree with R")
     end
 
     @testset "GloVe: Julia cost ≤ R × 2.0" begin
-        r_cost = _read_scalar(joinpath(FIXTURE_DIR, "glove_final_cost.txt"))
-        X_glove = _load_sparse(joinpath(FIXTURE_DIR, "glove_X.csv"),
-                                joinpath(FIXTURE_DIR, "glove_dims.csv"))
-        m_glove = GloVe(rank=5, x_max=10.0, learning_rate=0.15, max_iter=30, verbose=false)
-        fit!(m_glove, X_glove; rng=MersenneTwister(42))
-        jl_cost = last(m_glove.loss_history)
-        @test isfinite(jl_cost)
-        @test jl_cost <= r_cost * 2.0
-        println("  GloVe cost: Julia=$jl_cost, R=$r_cost, ratio=$(jl_cost/r_cost)")
+        glove_files = [
+            joinpath(FIXTURE_DIR, "glove_final_cost.txt"),
+            joinpath(FIXTURE_DIR, "glove_X.csv"),
+            joinpath(FIXTURE_DIR, "glove_dims.csv"),
+        ]
+        if _all_files_exist(glove_files)
+            r_cost = _read_scalar(joinpath(FIXTURE_DIR, "glove_final_cost.txt"))
+            X_glove = _load_sparse(joinpath(FIXTURE_DIR, "glove_X.csv"),
+                                   joinpath(FIXTURE_DIR, "glove_dims.csv"))
+            m_glove = GloVe(rank=5, x_max=10.0, learning_rate=0.15, max_iter=30, verbose=false)
+            fit!(m_glove, X_glove; rng=MersenneTwister(42))
+            jl_cost = last(m_glove.loss_history)
+            @test isfinite(jl_cost)
+            @test jl_cost <= r_cost * 2.0
+            println("  GloVe cost: Julia=$jl_cost, R=$r_cost, ratio=$(jl_cost/r_cost)")
+        else
+            @info "Skipping GloVe comparison: one or more fixture files are missing"
+        end
     end
 
     @testset "Metrics: exact match with R" begin
-        ref = (ap   = _read_col(joinpath(FIXTURE_DIR, "metrics_ref.csv"), "ap")[1],
-               ndcg = _read_col(joinpath(FIXTURE_DIR, "metrics_ref.csv"), "ndcg")[1])
-        actual = sparse([1,1,1], [5,7,9], ones(3), 1, 10)
-        preds = [5 7 9 2]
-        ap = ap_at_k(preds, actual; k=4)[1]
-        ndcg = ndcg_at_k(preds, actual; k=4)[1]
-        @test ap ≈ ref.ap atol=1e-6
-        @test ndcg ≈ ref.ndcg atol=1e-6
-        println("  Metrics AP: Julia=$ap, R=$(ref.ap)")
-        println("  Metrics NDCG: Julia=$ndcg, R=$(ref.ndcg)")
+        metrics_path = joinpath(FIXTURE_DIR, "metrics_ref.csv")
+        if isfile(metrics_path)
+            ref = (ap   = _read_col(metrics_path, "ap")[1],
+                   ndcg = _read_col(metrics_path, "ndcg")[1])
+            actual = sparse([1,1,1], [5,7,9], ones(3), 1, 10)
+            preds = [5 7 9 2]
+            ap = ap_at_k(preds, actual; k=4)[1]
+            ndcg = ndcg_at_k(preds, actual; k=4)[1]
+            @test ap ≈ ref.ap atol=1e-6
+            @test ndcg ≈ ref.ndcg atol=1e-6
+            println("  Metrics AP: Julia=$ap, R=$(ref.ap)")
+            println("  Metrics NDCG: Julia=$ndcg, R=$(ref.ndcg)")
+        else
+            @info "Skipping metrics comparison: metrics_ref.csv is missing"
+        end
     end
 
 end

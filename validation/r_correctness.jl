@@ -2,7 +2,7 @@
 # Production-grade correctness validation for Gideon.jl
 # ─────────────────────────────────────────────────────────────────────────────
 # Tier 1 — Mathematical correctness (always run; no R required)
-# Tier 2 — R reference validation (requires test/fixtures/; run generate_fixtures.R)
+# Tier 2 — R reference validation (requires /tmp/gideon_fixtures/; run fixtures_r.R)
 # ─────────────────────────────────────────────────────────────────────────────
 
 const FIXTURE_DIR = joinpath(@__DIR__, "fixtures")
@@ -411,7 +411,7 @@ end   # Tier 1
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # TIER 2 — R Reference Validation
-# Requires: Rscript test/generate_fixtures.R   (creates test/fixtures/)
+# Requires: Rscript validation/fixtures_r.R   (creates /tmp/gideon_fixtures/)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 if isdir(FIXTURE_DIR) && isfile(joinpath(FIXTURE_DIR, "wrmf_chol_loss.txt"))
@@ -542,6 +542,6 @@ if isdir(FIXTURE_DIR) && isfile(joinpath(FIXTURE_DIR, "wrmf_chol_loss.txt"))
 else
     @warn """
     Tier 2 (R reference fixtures) skipped — test/fixtures/ not found or incomplete.
-    To generate: cd $(dirname(@__DIR__)) && Rscript test/generate_fixtures.R
+    To generate: cd $(dirname(@__DIR__)) && Rscript validation/fixtures_r.R
     """
 end

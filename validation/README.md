@@ -2,9 +2,35 @@
 
 This directory contains optional reference-based validation scripts for Gideon.jl. These are **not part of the test suite**—they're tools for validating changes and performance against reference implementations.
 
+By default, R fixtures are stored in `/tmp/gideon_fixtures`.
+You can override this with `GIDEON_R_FIXTURE_DIR`.
+By default, Python fixtures are stored in `/tmp/gideon_fixtures/python`.
+You can override this with `GIDEON_PY_FIXTURE_DIR`.
+
+## Quick Start (One Command)
+
+Run everything (generate fixtures + compare against R and Python):
+
+```bash
+julia --project=. validation/run.jl --prepare --all
+```
+
+Run only one reference:
+
+```bash
+julia --project=. validation/run.jl --prepare --r
+julia --project=. validation/run.jl --prepare --python
+```
+
+If dependencies are missing (`Rscript`, `python3`, or Python `implicit`), the runner prints warnings and skips that part.
+
 ## Structure
 
-- **`compare_with_r.jl`** — Validates Gideon algorithms against R implementations (rsparse package)
+- **`validate_r.jl`** — Validates Gideon algorithms against R implementations (rsparse package)
+- **`validate_py.jl`** — Validates Gideon algorithms against Python implementations (implicit package)
+- **`run.jl`** — Single entrypoint for prepare+run workflow
+- **`fixtures_r.R`** — R fixture generator
+- **`fixtures_py.py`** — Python fixture generator
 
 ## Running R Reference Validation
 
@@ -13,16 +39,16 @@ This directory contains optional reference-based validation scripts for Gideon.j
 Fixtures are R reference outputs saved as CSV files. Generate them once:
 
 ```bash
-cd ..
-Rscript test/generate_fixtures.R
+Rscript validation/fixtures_r.R
 ```
 
-This creates files in `test/fixtures/`:
+This creates files in `/tmp/gideon_fixtures/` (or `GIDEON_R_FIXTURE_DIR` if set):
+- `rsparse_capabilities.csv` (detected model/class availability in your R environment)
 - `wrmf_chol_loss.txt`, `wrmf_chol_user.csv`, `wrmf_chol_item.csv`
 - `wrmf_cg_loss.txt`, `wrmf_cg_user.csv`, `wrmf_cg_item.csv`
 - `X_small.csv`, `X_small_dims.csv`
 - `X_ftrl.csv`, `X_ftrl_dims.csv`, `y_ftrl.csv`, `ftrl_weights.csv`, `ftrl_preds.csv`
-- `fm_xor_preds.csv`
+- `fm_xor_preds.csv` (generated with `rsparse::FactorizationMachine`)
 - `glove_X.csv`, `glove_dims.csv`, `glove_final_cost.txt`
 - `metrics_ref.csv`
 
@@ -30,11 +56,35 @@ This creates files in `test/fixtures/`:
 - R with `rsparse` package
 - May take 2-5 minutes depending on system
 
+The FM fixture is generated with `rsparse::FactorizationMachine`.
+
 ### Step 2: Run Validation
 
 ```bash
-julia --project=. validation/compare_with_r.jl
+julia --project=. validation/validate_r.jl
 ```
+
+## Running Python Reference Validation
+
+### Step 1: Generate Python Fixtures
+
+```bash
+python3 validation/fixtures_py.py
+```
+
+This creates files in `/tmp/gideon_fixtures/python/` (or `GIDEON_PY_FIXTURE_DIR` if set).
+
+### Step 2: Run Validation
+
+```bash
+julia --project=. validation/validate_py.jl
+```
+
+This compares score behavior for:
+- WMF (Julia) vs ALS (Python implicit)
+- BPR (Julia) vs BPR (Python implicit)
+
+The script reports score correlation and top-k overlap.
 
 Output shows:
 - Test pass/fail status
@@ -62,14 +112,18 @@ GloVe cost: Julia=456.78, R=450.0, ratio=1.0151
 
 **R package versions used:**
 - `rsparse`: 0.5.0+
-- See `test/generate_fixtures.R` for exact versions
+- See `validation/fixtures_r.R` for exact versions
 
 ## Notes
 
 - Fixtures are **NOT** stored in git—generate locally only when validating
-- Fixtures are placed in `test/fixtures/` (same directory as test scripts)
+- R fixtures are placed in `/tmp/gideon_fixtures` by default
+- Override path with `GIDEON_R_FIXTURE_DIR=/custom/path`
+- Python fixtures are placed in `/tmp/gideon_fixtures/python` by default
+- Override path with `GIDEON_PY_FIXTURE_DIR=/custom/path`
 - Tolerance bounds are tight:
   - WMF: ≤ 1.05× R (was 1.10×)
   - FTRL: ≥ 0.9995 correlation (was 0.999)
   - GloVe: ≤ 2.0× R (was 3.0×)
 - If fixtures are missing, validation gracefully skips with warning
+- FM comparison is optional and skipped when `fm_xor_preds.csv` is unavailable
