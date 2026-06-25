@@ -62,7 +62,7 @@ using Pkg
     @testset "Coverage" begin
         include("test_coverage.jl")
     end
-    @testset "R Correctness" begin
-        include("test_r_correctness.jl")
+    @testset "Correctness" begin
+        include("test_correctness.jl")
     end
 end

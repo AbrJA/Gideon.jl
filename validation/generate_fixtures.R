@@ -1,10 +1,11 @@
 #!/usr/bin/env Rscript
 # test/generate_fixtures.R
-# Generates R reference fixtures for Gideon.jl correctness validation.
+# Generates R reference fixtures for Gideon.jl validation (NOT part of test suite).
 # Run from project root: Rscript test/generate_fixtures.R
 #
 # Outputs to test/fixtures/ (directory is created if absent).
-# These CSV files are committed to git so tests run without R installed.
+# These CSV files are used by validation/compare_with_r.jl for reference comparison.
+# See validation/README.md for details.
 
 suppressPackageStartupMessages({
   library(rsparse)
