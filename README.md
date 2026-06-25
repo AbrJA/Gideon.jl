@@ -13,7 +13,7 @@
 
 ---
 
-Gideon.jl is a pure-Julia port and enhancement of the R package [rsparse](https://github.com/dselivanov/rsparse), providing a unified, extensible interface for matrix factorization, sparse regression, and recommender-system evaluation. All algorithms are validated against R reference outputs and optimized for production scale via multithreading, SIMD vectorization, and optional GPU acceleration.
+Gideon.jl is a high-performance Julia toolkit for sparse statistical learning, large-scale matrix factorization, and recommender systems. It provides a unified, extensible API for training, evaluation, and model selection across recommendation and sparse regression workflows, with production-oriented implementations optimized through multithreading, SIMD vectorization, optional GPU acceleration, and rigorous reference-based validation.
 
 ## Features
 
