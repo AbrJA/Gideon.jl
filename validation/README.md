@@ -83,8 +83,16 @@ julia --project=. validation/validate_py.jl
 This compares score behavior for:
 - WMF (Julia) vs ALS (Python implicit)
 - BPR (Julia) vs BPR (Python implicit)
+- LogisticMF (Julia) vs LogisticMatrixFactorization (Python implicit, optional)
+- EASE (Julia) vs deterministic NumPy EASE implementation
 
 The script reports score correlation and top-k overlap.
+For EASE it also reports matrix-level relative Frobenius error.
+For LogisticMF, top-k overlap is the primary pass criterion by default; score correlation is reported for diagnostics.
+For BPR and LogisticMF, it additionally compares split-based ranking quality (NDCG@10 and Recall@10)
+on the same train/test split generated from Python fixtures.
+By default, LogisticMF split-metric deltas are diagnostic only; set `GIDEON_PY_LMF_STRICT=1`
+to enforce threshold-based pass/fail for those deltas.
 
 Output shows:
 - Test pass/fail status
