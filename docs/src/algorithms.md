@@ -140,6 +140,7 @@ preds = recommend(model, X; k=10)
 
 ```@docs
 OnlineRegressor
+coef
 ```
 
 ### Example
