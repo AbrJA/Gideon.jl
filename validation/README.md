@@ -82,9 +82,13 @@ julia --project=. validation/validate_py.jl
 
 This compares score behavior for:
 - WMF (Julia) vs ALS (Python implicit)
+- IALS (Julia) vs ALS-based Python reference
+- EALS (Julia) vs ALS-surrogate Python reference
 - BPR (Julia) vs BPR (Python implicit)
 - LogisticMF (Julia) vs LogisticMatrixFactorization (Python implicit, optional)
 - EASE (Julia) vs deterministic NumPy EASE implementation
+- SLIM (Julia) vs scikit-learn ElasticNet reference (optional)
+- SoftImpute (Julia) vs iterative soft-threshold SVD reference
 
 The script reports score correlation and top-k overlap.
 For EASE it also reports matrix-level relative Frobenius error.
@@ -93,6 +97,11 @@ For BPR and LogisticMF, it additionally compares split-based ranking quality (ND
 on the same train/test split generated from Python fixtures.
 By default, LogisticMF split-metric deltas are diagnostic only; set `GIDEON_PY_LMF_STRICT=1`
 to enforce threshold-based pass/fail for those deltas.
+By default, SoftImpute parity is diagnostic only; set `GIDEON_PY_SOFT_STRICT=1`
+to enforce reconstruction/singular-value thresholds.
+
+Note: SLIM parity requires `scikit-learn` in the Python environment. If unavailable,
+SLIM fixture generation/parity is skipped gracefully.
 
 Output shows:
 - Test pass/fail status
