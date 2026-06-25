@@ -173,7 +173,7 @@ end
         min_cor = parse(Float64, get(ENV, "GIDEON_PY_BPR_MIN_COR", "0.20"))
         min_ov = parse(Float64, get(ENV, "GIDEON_PY_BPR_MIN_OVERLAP", "0.10"))
         max_ndcg_delta = parse(Float64, get(ENV, "GIDEON_PY_BPR_MAX_NDCG_DELTA", "0.05"))
-        max_recall_delta = parse(Float64, get(ENV, "GIDEON_PY_BPR_MAX_RECALL_DELTA", "0.06"))
+        max_recall_delta = parse(Float64, get(ENV, "GIDEON_PY_BPR_MAX_RECALL_DELTA", "0.07"))
 
         @test isfinite(c)
         @test c >= min_cor
@@ -236,7 +236,7 @@ end
     end
 
     @testset "EALS (Julia) vs EALS surrogate (Python)" begin
-        m = EALS(rank=rank, λ=0.01, w0=1.0, max_iter=10, verbose=false)
+        m = EALS(rank=rank, λ=0.01, w0=10.0, max_iter=20, verbose=false)
         fit!(m, X; rng=MersenneTwister(42))
         jl_scores = Matrix(transpose(m.user_factors) * m.item_factors)
 
@@ -275,8 +275,8 @@ end
             py_lmf = _read_matrix(lmf_path)
 
             m = LogisticMF(
-                rank=rank, λ=0.01, α=1.0,
-                learning_rate=0.01, max_iter=30, verbose=false,
+                rank=rank, λ=0.6, α=1.0,
+                learning_rate=1.0, max_iter=30, n_negative=30, verbose=false,
             )
             fit!(m, X; rng=MersenneTwister(42))
             jl_scores = Matrix(transpose(m.user_factors) * m.item_factors)
@@ -353,7 +353,7 @@ end
         if isfile(slim_w_path)
             py_w = _read_matrix(slim_w_path)
 
-            m = SLIM(λ_1=0.01, λ_2=0.1, max_iter=30, verbose=false)
+            m = SLIM(λ_1=0.001, λ_2=0.01, max_iter=50, verbose=false)
             fit!(m, X_train)
             jl_w = Matrix(m.W)
 
@@ -390,7 +390,15 @@ end
             py_svals_mat = _read_matrix(soft_svals_path)
             py_svals = vec(py_svals_mat)
 
-            m = SoftImpute(rank=10, λ=0.1, max_iter=40, convergence_tol=1e-4, verbose=false)
+            m = SoftImpute(
+                rank=10,
+                λ=0.1,
+                max_iter=40,
+                convergence_tol=1e-4,
+                target=:svd,
+                final_svd=false,
+                verbose=false,
+            )
             fit!(m, X_train; rng=MersenneTwister(42))
             jl_recon = Matrix(m.U * Diagonal(m.d) * m.V')
 

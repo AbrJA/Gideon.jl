@@ -337,7 +337,9 @@ def main() -> int:
         np.savetxt(out_dir / "py_lmf_scores.csv", lmf_scores, delimiter=",")
 
     # Optional SLIM reference using sklearn ElasticNet.
-    slim_w = try_fit_slim(train, l1=0.01, l2=0.1, max_iter=200)
+    slim_l1 = 0.001
+    slim_l2 = 0.01
+    slim_w = try_fit_slim(train, l1=slim_l1, l2=slim_l2, max_iter=300)
     if slim_w is not None:
         np.savetxt(out_dir / "py_slim_W.csv", slim_w, delimiter=",")
 
@@ -414,6 +416,8 @@ def main() -> int:
         "lmf_class": None if lmf_class is None else lmf_class.__name__,
         "ease_lambda": ease_lambda,
         "slim_available": slim_w is not None,
+        "slim_l1": slim_l1,
+        "slim_l2": slim_l2,
         "implicit_version": getattr(implicit, "__version__", "unknown"),
     }
     (out_dir / "meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")

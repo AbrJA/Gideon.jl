@@ -132,15 +132,10 @@ function fit!(model::EALS{T}, X::SparseMatrixCSC{Tv,Ti};
     U = model.user_factors
     V = model.item_factors
 
-    # Compute item popularity weights: c_i = w0 * (freq_i / max_freq)^exponent
-    item_freq = zeros(T, n_items)
-    for j in axes(X, 2)
-        item_freq[j] = T(length(nzrange(X, j)))
-    end
-    max_freq = maximum(item_freq; init=one(T))
-    model.item_weights = model.w0 .* (item_freq ./ max_freq) .^ model.popularity_exponent
-    # Ensure minimum weight
-    model.item_weights .= max.(model.item_weights, T(1e-6))
+    # Compute item popularity weights with c0-mass normalization:
+    # c_i = w0 * freq_i^a / Σ_j freq_j^a
+    # This matches the EALS weighting scale where w0 controls total missing-data mass.
+    model.item_weights = _eals_item_weights(X, model.w0, model.popularity_exponent)
     c_items = model.item_weights
 
     # Build CSR for row access
@@ -223,14 +218,8 @@ function update!(model::EALS{T}, X::SparseMatrixCSC{Tv,Ti};
     U = model.user_factors
     V = model.item_factors
 
-    # Recompute item weights
-    item_freq = zeros(T, n_items)
-    for j in axes(X, 2)
-        item_freq[j] = T(length(nzrange(X, j)))
-    end
-    max_freq = maximum(item_freq; init=one(T))
-    model.item_weights = model.w0 .* (item_freq ./ max_freq) .^ model.popularity_exponent
-    model.item_weights .= max.(model.item_weights, T(1e-6))
+    # Recompute item weights with c0-mass normalization.
+    model.item_weights = _eals_item_weights(X, model.w0, model.popularity_exponent)
     c_items = model.item_weights
 
     X_csr = to_csr(X)
@@ -243,6 +232,24 @@ function update!(model::EALS{T}, X::SparseMatrixCSC{Tv,Ti};
         _eals_update_items!(V, U, X, SU, c_items, λ_val, k, n_items)
     end
     model
+end
+
+function _eals_item_weights(X::SparseMatrixCSC{Tv,Ti}, w0::T, a::T) where {Tv,Ti,T<:AbstractFloat}
+    n_items = size(X, 2)
+    freq = zeros(T, n_items)
+    @inbounds for j in 1:n_items
+        freq[j] = T(length(nzrange(X, j)))
+    end
+
+    pow_freq = a == zero(T) ? ones(T, n_items) : freq .^ a
+    mass = sum(pow_freq)
+
+    if !(mass > eps(T))
+        return fill(w0 / max(one(T), T(n_items)), n_items)
+    end
+
+    # Keep a tiny positive floor for numerical robustness when an item has zero frequency.
+    return max.(w0 .* (pow_freq ./ mass), T(1e-12))
 end
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -331,9 +338,10 @@ function _eals_update_users!(U::Matrix{T}, V::Matrix{T},
                 # pred_no_f = prediction without factor f contribution
                 pred_no_f = buf[pos] - U[f, u] * v_jf
 
-                # Correct formula: c_obs * r_uj - c_diff * pred_no_f
-                # where c_diff = 1 (not c_obs!)
-                numer += v_jf * (c_obs * r_uj - pred_no_f)
+                # EALS uses binary preference p=1 for observed entries.
+                # Correct formula: c_obs * p_ui - c_diff * pred_no_f
+                # where p_ui = 1 and c_diff = c_obs - c_j = 1
+                numer += v_jf * (c_obs - pred_no_f)
                 denom += v_jf^2  # c_diff = 1
             end
 
@@ -419,8 +427,8 @@ function _eals_update_items!(V::Matrix{T}, U::Matrix{T},
                 # pred_no_f = prediction without factor f
                 pred_no_f = buf[pos] - V[f, j] * u_uf
 
-                # Correct formula: c_obs * r_uj - c_diff * pred_no_f (c_diff=1)
-                numer += u_uf * (c_obs * r_uj - pred_no_f)
+                # EALS: binary preference p=1; c_diff = c_obs - c_j = 1
+                numer += u_uf * (c_obs - pred_no_f)
                 denom += u_uf^2  # c_diff = 1
             end
 
@@ -449,6 +457,8 @@ function _eals_loss(U::Matrix{T}, V::Matrix{T}, X::SparseMatrixCSC,
     n_items = size(V, 2)
 
     # Loss from observed entries: Σ_{(u,i)∈Ω} (1 + c_i) * (r_{ui} - u^T v)²
+    # Loss from observed entries: Σ_{(u,i)∈Ω} (1 + c_i) * (p_{ui} - u^T v)²
+    # where p_{ui} = 1 (binary preference for all observed entries)
     loss_obs = zero(T)
     rv = rowvals(X)
     nz = nonzeros(X)
@@ -456,12 +466,11 @@ function _eals_loss(U::Matrix{T}, V::Matrix{T}, X::SparseMatrixCSC,
         cj = c_items[j]
         for idx in nzrange(X, j)
             u = rv[idx]
-            r = T(nz[idx])
             pred = zero(T)
             @inbounds @simd for f in 1:k
                 pred += U[f, u] * V[f, j]
             end
-            loss_obs += (one(T) + cj) * (r - pred)^2
+            loss_obs += (one(T) + cj) * (one(T) - pred)^2
         end
     end
 
