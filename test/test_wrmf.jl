@@ -1,7 +1,7 @@
 # test/test_wrmf.jl — WMF algorithm tests
 
 # Helper: compute observed-entry implicit WMF loss
-function _wrmf_loss(U::Matrix{Float64}, V::Matrix{Float64},
+function _wrmf_loss(U::Matrix{<:AbstractFloat}, V::Matrix{<:AbstractFloat},
                     X::SparseMatrixCSC, λ::Float64, α::Float64)
     rv = rowvals(X); nz = nonzeros(X); loss = 0.0
     for j in axes(X, 2), idx in nzrange(X, j)

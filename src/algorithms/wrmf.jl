@@ -82,7 +82,7 @@ function WMF(;
     cg_steps::Int = 3,
     feedback::FeedbackType = IMPLICIT,
     verbose::Bool = true,
-    dtype::Type{<:AbstractFloat} = Float64,
+    dtype::Type{<:AbstractFloat} = Float32,
 )
     rank >= 1 || throw(ArgumentError("rank must be ≥ 1, got $rank"))
     λ >= 0.0 || throw(ArgumentError("λ must be non-negative, got $λ"))
@@ -225,7 +225,7 @@ function _als_sweep_cholesky!(
             yi  = @view fixed[:, i]
 
             if is_implicit
-                cui = one(T) + α * rui
+                cui = max(one(T), one(T) + α * rui)
                 BLAS.syr!('U', cui - one(T), yi, gram)
                 BLAS.axpy!(cui, yi, rhs)
             else
@@ -268,7 +268,7 @@ function _nnls_cd!(
         rui = T(nz[idx])
         yi  = @view Y[:, i]
         if is_implicit
-            cui = one(T) + α * rui
+            cui = max(one(T), one(T) + α * rui)
             BLAS.syr!('U', cui - one(T), yi, gram)
             BLAS.axpy!(cui, yi, rhs)
         else
@@ -340,7 +340,7 @@ function _als_sweep_cg!(
             rui = T(nz[idx])
             idxs[pos] = i
             if is_implicit
-                cui = one(T) + α * rui
+                cui = max(one(T), one(T) + α * rui)
                 wgts[pos] = cui - one(T)
                 BLAS.axpy!(cui, @view(fixed[:, i]), rhs)
             else
@@ -461,7 +461,7 @@ function _compute_loss(model::WMF{T}, X::SparseMatrixCSC) where {T}
                 pred += U[f, i] * V[f, j]
             end
             if model.feedback == IMPLICIT
-                c = one(T) + α * r
+                c = max(one(T), one(T) + α * r)
                 loss += c * (one(T) - pred)^2
             else
                 loss += (r - pred)^2
