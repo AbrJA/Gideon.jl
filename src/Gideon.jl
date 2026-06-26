@@ -27,6 +27,8 @@ include("algorithms/lmf.jl")
 include("algorithms/bpr.jl")
 include("algorithms/ease.jl")
 include("algorithms/slim.jl")
+include("algorithms/admmslim.jl")
+include("algorithms/knn.jl")
 include("algorithms/soft_impute.jl")
 
 # ── Metrics & evaluation ──
@@ -63,8 +65,11 @@ export
     BPR,
     EASE,
     SLIM,
+    ADMMSLIM,
+    ItemKNN,
     SoftImpute,
     SoftSVD,
+    PureSVD,
     AbstractSoftALS,
 
     # Generic API

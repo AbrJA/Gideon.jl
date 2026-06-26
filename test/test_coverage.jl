@@ -339,6 +339,33 @@ end
     @test all(isfinite, model.V)
 end
 
+@testset "ItemKNN basic coverage" begin
+    rng = MersenneTwister(42)
+    X = sprand(rng, 40, 20, 0.2)
+
+    model = ItemKNN(k=5, similarity=:cosine, verbose=false)
+    fit!(model, X)
+    @test model.is_fitted
+    preds = recommend(model, X; k=3)
+    @test size(preds) == (40, 3)
+    S = score(model, X)
+    @test size(S) == (40, 20)
+end
+
+@testset "ADMMSLIM basic coverage" begin
+    rng = MersenneTwister(42)
+    X = sprand(rng, 40, 15, 0.2)
+
+    model = ADMMSLIM(λ_1=0.01, λ_2=100.0, max_iter=20, verbose=false)
+    fit!(model, X)
+    @test model.is_fitted
+    preds = recommend(model, X; k=3)
+    @test size(preds) == (40, 3)
+    S = score(model, X)
+    @test size(S) == (40, 15)
+    @test all(isfinite, S)
+end
+
 # ──────────────────────────────────────────────────────────────────────────────
 # GPU tests (actual CUDA tests when available)
 # ──────────────────────────────────────────────────────────────────────────────

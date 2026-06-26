@@ -3,11 +3,12 @@ using Gideon
 using SparseArrays
 using LinearAlgebra
 using Random
+using Statistics
 using Aqua
 using JET
 using Pkg
 
-@testset "Gideon.jl" begin
+@testset verbose=true "Gideon.jl" begin
     @testset "Quality" begin
         include("test_quality.jl")
     end
@@ -43,6 +44,12 @@ using Pkg
     end
     @testset "SLIM" begin
         include("test_slim.jl")
+    end
+    @testset "ADMMSLIM" begin
+        include("test_admmslim.jl")
+    end
+    @testset "ItemKNN" begin
+        include("test_knn.jl")
     end
     @testset "SoftImpute" begin
         include("test_soft_impute.jl")

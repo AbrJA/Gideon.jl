@@ -75,6 +75,16 @@ import PrecompileTools: @setup_workload, @compile_workload
         m_svd = SoftSVD(rank=3, max_iter=3, verbose=false)
         fit!(m_svd, X_small; rng=MersenneTwister(10))
 
+        # ItemKNN
+        m_knn = ItemKNN(k=3, similarity=:cosine, verbose=false)
+        fit!(m_knn, X_small; rng=MersenneTwister(11))
+        recommend(m_knn, X_small; k=3)
+
+        # ADMM-SLIM
+        m_admm = ADMMSLIM(λ_1=0.1, λ_2=100.0, max_iter=5, verbose=false)
+        fit!(m_admm, X_small; rng=MersenneTwister(12))
+        recommend(m_admm, X_small; k=3)
+
         # Metrics
         preds_small = Matrix{Int}(hcat([randperm(rng, n_items)[1:3] for _ in 1:n_users]...)')
         actual_small = sprand(rng, n_users, n_items, 0.2)

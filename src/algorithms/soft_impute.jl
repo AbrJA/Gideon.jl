@@ -148,6 +148,30 @@ function SoftSVD(;
 end
 
 # ──────────────────────────────────────────────────────────────────────────────
+# PureSVD — convenience alias for truncated SVD (SoftSVD with λ=0, no final_svd)
+# ──────────────────────────────────────────────────────────────────────────────
+
+"""
+    PureSVD(; rank=10, max_iter=100, convergence_tol=1e-3, verbose=true)
+
+Truncated SVD via power iteration. Equivalent to `SoftSVD(λ=0, final_svd=false)`.
+Computes the top-`rank` singular triplets of a sparse matrix.
+
+# Example
+```julia
+using SparseArrays, Gideon
+X = sprand(1000, 500, 0.05)
+model = PureSVD(rank=20)
+fit!(model, X)
+# model.U * Diagonal(model.d) * model.V' ≈ best rank-20 approximation
+```
+"""
+function PureSVD(; rank::Int=10, max_iter::Int=100, convergence_tol::Float64=1e-3, verbose::Bool=true)
+    SoftSVD(rank=rank, λ=0.0, max_iter=max_iter, convergence_tol=convergence_tol,
+            final_svd=false, verbose=verbose)
+end
+
+# ──────────────────────────────────────────────────────────────────────────────
 # ALS step dispatch — the only algorithmic difference between the two types
 # ──────────────────────────────────────────────────────────────────────────────
 
