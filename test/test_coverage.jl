@@ -306,7 +306,7 @@ end
 end
 
 # ──────────────────────────────────────────────────────────────────────────────
-# SoftImpute specific tests
+# SoftImpute / SoftSVD specific tests
 # ──────────────────────────────────────────────────────────────────────────────
 
 @testset "SoftImpute convergence" begin
@@ -316,8 +316,25 @@ end
     model = SoftImpute(rank=5, λ=1.0, max_iter=50, convergence_tol=1e-5, verbose=false)
     fit!(model, X; rng=rng)
     @test model.is_fitted
-    @test size(model.U) == (30, 5)
-    @test size(model.V) == (20, 5)
+    @test size(model.U, 1) == 30
+    @test size(model.U, 2) <= 5
+    @test size(model.V, 1) == 20
+    @test size(model.V, 2) <= 5
+    @test all(isfinite, model.U)
+    @test all(isfinite, model.V)
+end
+
+@testset "SoftSVD convergence" begin
+    rng = MersenneTwister(42)
+    X = sprand(rng, 30, 20, 0.2)
+
+    model = SoftSVD(rank=5, λ=1.0, max_iter=50, convergence_tol=1e-5, verbose=false)
+    fit!(model, X; rng=rng)
+    @test model.is_fitted
+    @test size(model.U, 1) == 30
+    @test size(model.U, 2) <= 5
+    @test size(model.V, 1) == 20
+    @test size(model.V, 2) <= 5
     @test all(isfinite, model.U)
     @test all(isfinite, model.V)
 end

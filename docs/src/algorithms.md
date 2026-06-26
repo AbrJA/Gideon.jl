@@ -171,10 +171,11 @@ fit!(model, X, y; rng=MersenneTwister(42))
 predict(model, X)
 ```
 
-## SoftImpute — Low-rank Matrix Completion
+## SoftImpute / SoftSVD — Low-rank Matrix Completion
 
 ```@docs
 SoftImpute
+SoftSVD
 ```
 
 ### Example
@@ -182,7 +183,14 @@ SoftImpute
 ```julia
 using Gideon, SparseArrays, Random
 X = sprand(MersenneTwister(1), 200, 150, 0.3)
+
+# SoftImpute: full imputation correction (default, better for missing data)
 model = SoftImpute(rank=10, λ=0.5, max_iter=100)
 fit!(model, X; rng=MersenneTwister(1))
+
+# SoftSVD: power-iteration style (faster per iteration)
+model_svd = SoftSVD(rank=10, λ=0.5, max_iter=100)
+fit!(model_svd, X; rng=MersenneTwister(1))
+
 # Low-rank: model.U * Diagonal(model.d) * model.V'
 ```

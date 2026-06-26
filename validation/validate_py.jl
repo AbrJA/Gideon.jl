@@ -390,12 +390,11 @@ end
             py_svals_mat = _read_matrix(soft_svals_path)
             py_svals = vec(py_svals_mat)
 
-            m = SoftImpute(
+            m = SoftSVD(
                 rank=10,
                 λ=0.1,
                 max_iter=40,
                 convergence_tol=1e-4,
-                target=:svd,
                 final_svd=false,
                 verbose=false,
             )

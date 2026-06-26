@@ -64,6 +64,8 @@ export
     EASE,
     SLIM,
     SoftImpute,
+    SoftSVD,
+    AbstractSoftALS,
 
     # Generic API
     fit!,

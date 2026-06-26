@@ -1,4 +1,4 @@
-# test/test_soft_impute.jl — SoftImpute tests
+# test/test_soft_impute.jl — SoftImpute / SoftSVD tests
 
 @testset "Basic SoftImpute" begin
     rng = MersenneTwister(42)
@@ -6,6 +6,7 @@
     model = SoftImpute(rank=5, λ=0.1, max_iter=20, verbose=false)
     fit!(model, X; rng=rng)
     @test model isa SoftImpute
+    @test model isa AbstractSoftALS
     @test model.is_fitted
     @test size(model.U, 2) <= 5
     @test length(model.d) <= 5
@@ -21,8 +22,10 @@ end
 @testset "SoftSVD mode" begin
     rng = MersenneTwister(42)
     X = sprand(rng, 50, 40, 0.2)
-    model = SoftImpute(rank=5, λ=0.0, max_iter=20, target=:svd, verbose=false)
+    model = SoftSVD(rank=5, λ=0.0, max_iter=20, verbose=false)
     fit!(model, X; rng=rng)
+    @test model isa SoftSVD
+    @test model isa AbstractSoftALS
     @test all(model.d .>= 0)
 end
 

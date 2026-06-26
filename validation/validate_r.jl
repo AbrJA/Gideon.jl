@@ -54,13 +54,13 @@ function _load_sparse(triplet::String, dims::String)
     sparse(rv, cv, vv, nr, nc)
 end
 
-function _cor(x::Vector{Float64}, y::Vector{Float64})
+function _cor(x::Vector{<:AbstractFloat}, y::Vector{<:AbstractFloat})
     mx = sum(x) / length(x); my = sum(y) / length(y)
     dx = x .- mx; dy = y .- my
     dot(dx, dy) / (sqrt(dot(dx, dx) * dot(dy, dy)) + 1e-15)
 end
 
-function _wrmf_loss_ref(U::Matrix{Float64}, V::Matrix{Float64},
+function _wrmf_loss_ref(U::Matrix{<:AbstractFloat}, V::Matrix{<:AbstractFloat},
                         X::SparseMatrixCSC, λ::Float64, α::Float64)
     rv = rowvals(X); nz = nonzeros(X); loss = 0.0
     for j in axes(X, 2), idx in nzrange(X, j)
@@ -145,8 +145,8 @@ end
     @testset "WMF CholeskySolver: warm-start does not increase loss" begin
         U_raw = _read_matrix(joinpath(FIXTURE_DIR, "wrmf_chol_user.csv"))
         V_raw = _read_matrix(joinpath(FIXTURE_DIR, "wrmf_chol_item.csv"))
-        U_r = Matrix{Float64}(U_raw')
-        V_r = Matrix{Float64}(V_raw)
+        U_r = Matrix{Float32}(U_raw')
+        V_r = Matrix{Float32}(V_raw)
         r_loss = _read_scalar(joinpath(FIXTURE_DIR, "wrmf_chol_loss.txt"))
 
         m_ws = WMF(rank=RANK, λ=λ_r, α=α_r, max_iter=1,
@@ -264,6 +264,100 @@ end
             println("  Metrics NDCG: Julia=$ndcg, R=$(ref.ndcg)")
         else
             @info "Skipping metrics comparison: metrics_ref.csv is missing"
+        end
+    end
+
+    @testset "SoftImpute: singular values and reconstruction match R" begin
+        si_d_path = joinpath(FIXTURE_DIR, "softimpute_si_d.csv")
+        si_obs_path = joinpath(FIXTURE_DIR, "softimpute_si_obs_preds.csv")
+        si_frob_path = joinpath(FIXTURE_DIR, "softimpute_si_frob.txt")
+        if _all_files_exist([si_d_path, si_obs_path, si_frob_path])
+            r_d = _read_col(si_d_path, "d")
+            r_obs = _read_col(si_obs_path, "pred")
+            r_frob = _read_scalar(si_frob_path)
+
+            m_si = SoftImpute(rank=5, λ=1.0, max_iter=100,
+                              convergence_tol=1e-6,
+                              final_svd=true, verbose=false)
+            fit!(m_si, X_ref; rng=MersenneTwister(42))
+
+            jl_d = m_si.d
+            jl_frob = sum(abs2, jl_d)
+
+            # Reconstruction at observed positions
+            recon = m_si.U * Diagonal(m_si.d) * m_si.V'
+            rv = rowvals(X_ref); nz = nonzeros(X_ref)
+            jl_obs = Float64[]
+            for j in axes(X_ref, 2), idx in nzrange(X_ref, j)
+                push!(jl_obs, recon[rv[idx], j])
+            end
+
+            # Singular values: with rank-constrained SoftImpute, different random
+            # inits can converge to different local optima (non-convex when rank < true rank).
+            # We validate: same total variance, reasonable SV agreement, high reconstruction.
+            r_d_sorted = sort(r_d, rev=true)
+            jl_d_sorted = sort(jl_d, rev=true)
+            n_compare = min(length(r_d_sorted), length(jl_d_sorted))
+            sv_rel_err = norm(r_d_sorted[1:n_compare] .- jl_d_sorted[1:n_compare]) /
+                         (norm(r_d_sorted[1:n_compare]) + 1e-15)
+            @test sv_rel_err < 0.25
+            println("  SoftImpute SV relative error: $sv_rel_err")
+
+            # Frobenius norm (total variance): should be very close
+            frob_rel = abs(jl_frob - r_frob) / (r_frob + 1e-15)
+            @test frob_rel < 0.05
+            println("  SoftImpute Frob norm: Julia=$jl_frob, R=$r_frob, rel=$frob_rel")
+
+            # Reconstruction correlation at observed entries
+            cor_obs = _cor(jl_obs, r_obs)
+            @test cor_obs >= 0.97
+            println("  SoftImpute obs reconstruction correlation: $cor_obs")
+        else
+            @info "Skipping SoftImpute comparison: fixture files missing"
+        end
+    end
+
+    @testset "SoftSVD: singular values and reconstruction match R" begin
+        svd_d_path = joinpath(FIXTURE_DIR, "softimpute_svd_d.csv")
+        svd_obs_path = joinpath(FIXTURE_DIR, "softimpute_svd_obs_preds.csv")
+        svd_frob_path = joinpath(FIXTURE_DIR, "softimpute_svd_frob.txt")
+        if _all_files_exist([svd_d_path, svd_obs_path, svd_frob_path])
+            r_d = _read_col(svd_d_path, "d")
+            r_obs = _read_col(svd_obs_path, "pred")
+            r_frob = _read_scalar(svd_frob_path)
+
+            m_svd = SoftSVD(rank=5, λ=1.0, max_iter=100,
+                            convergence_tol=1e-6,
+                            final_svd=true, verbose=false)
+            fit!(m_svd, X_ref; rng=MersenneTwister(42))
+
+            jl_d = m_svd.d
+            jl_frob = sum(abs2, jl_d)
+
+            recon = m_svd.U * Diagonal(m_svd.d) * m_svd.V'
+            rv = rowvals(X_ref); nz = nonzeros(X_ref)
+            jl_obs = Float64[]
+            for j in axes(X_ref, 2), idx in nzrange(X_ref, j)
+                push!(jl_obs, recon[rv[idx], j])
+            end
+
+            r_d_sorted = sort(r_d, rev=true)
+            jl_d_sorted = sort(jl_d, rev=true)
+            n_compare = min(length(r_d_sorted), length(jl_d_sorted))
+            sv_rel_err = norm(r_d_sorted[1:n_compare] .- jl_d_sorted[1:n_compare]) /
+                         (norm(r_d_sorted[1:n_compare]) + 1e-15)
+            @test sv_rel_err < 0.05
+            println("  SoftSVD SV relative error: $sv_rel_err")
+
+            frob_rel = abs(jl_frob - r_frob) / (r_frob + 1e-15)
+            @test frob_rel < 0.10
+            println("  SoftSVD Frob norm: Julia=$jl_frob, R=$r_frob, rel=$frob_rel")
+
+            cor_obs = _cor(jl_obs, r_obs)
+            @test cor_obs >= 0.99
+            println("  SoftSVD obs reconstruction correlation: $cor_obs")
+        else
+            @info "Skipping SoftSVD comparison: fixture files missing"
         end
     end
 

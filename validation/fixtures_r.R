@@ -191,6 +191,61 @@ write.csv(data.frame(ap = ap_val, ndcg = ndcg_val),
           file.path(fixture_dir, "metrics_ref.csv"), row.names = FALSE)
 cat(sprintf("   AP@4=%.6f  NDCG@4=%.6f\n", ap_val, ndcg_val))
 
+# ── 8. SoftImpute (soft_impute mode) ─────────────────────────────────────────
+cat("8. SoftImpute (soft_impute target, 100 iter)...\n")
+set.seed(42)
+# Use the shared matrix X (100×80, density=5%, ratings 1-5).
+# Run enough iterations to converge, then save results.
+si_rank   <- 5L
+si_lambda <- 1.0
+si_niter  <- 100L
+
+si_result <- soft_impute(X, rank = si_rank, lambda = si_lambda,
+                         n_iter = si_niter, convergence_tol = 1e-6,
+                         final_svd = TRUE)
+
+# Singular values
+write.csv(data.frame(d = si_result$d),
+          file.path(fixture_dir, "softimpute_si_d.csv"), row.names = FALSE)
+
+# Reconstruction at observed positions: U * diag(d) * V'
+# si_result$u: m × rank, si_result$v: n × rank, si_result$d: rank-vector
+si_recon <- si_result$u %*% diag(si_result$d) %*% t(si_result$v)
+cx <- as(X, "TsparseMatrix")
+si_obs_preds <- si_recon[cbind(cx@i + 1L, cx@j + 1L)]
+write.csv(data.frame(pred = si_obs_preds),
+          file.path(fixture_dir, "softimpute_si_obs_preds.csv"), row.names = FALSE)
+
+# Frobenius norm of solution
+si_frob <- sum(si_result$d^2)
+writeLines(as.character(si_frob),
+           file.path(fixture_dir, "softimpute_si_frob.txt"))
+cat(sprintf("   rank=%d  frob=%.6f  d=[%s]\n",
+            length(si_result$d), si_frob,
+            paste(round(si_result$d, 4), collapse = ", ")))
+
+# ── 9. SoftSVD (svd mode) ────────────────────────────────────────────────────
+cat("9. SoftSVD (svd target, 100 iter)...\n")
+set.seed(42)
+svd_result <- soft_svd(X, rank = si_rank, lambda = si_lambda,
+                       n_iter = si_niter, convergence_tol = 1e-6,
+                       final_svd = TRUE)
+
+write.csv(data.frame(d = svd_result$d),
+          file.path(fixture_dir, "softimpute_svd_d.csv"), row.names = FALSE)
+
+svd_recon <- svd_result$u %*% diag(svd_result$d) %*% t(svd_result$v)
+svd_obs_preds <- svd_recon[cbind(cx@i + 1L, cx@j + 1L)]
+write.csv(data.frame(pred = svd_obs_preds),
+          file.path(fixture_dir, "softimpute_svd_obs_preds.csv"), row.names = FALSE)
+
+svd_frob <- sum(svd_result$d^2)
+writeLines(as.character(svd_frob),
+           file.path(fixture_dir, "softimpute_svd_frob.txt"))
+cat(sprintf("   rank=%d  frob=%.6f  d=[%s]\n",
+            length(svd_result$d), svd_frob,
+            paste(round(svd_result$d, 4), collapse = ", ")))
+
 # ── Summary ───────────────────────────────────────────────────────────────────
 cat(sprintf("\nFixtures written to %s:\n", fixture_dir))
 for (f in sort(list.files(fixture_dir))) {

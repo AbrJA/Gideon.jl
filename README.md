@@ -44,7 +44,8 @@ Gideon.jl is a high-performance Julia toolkit for sparse statistical learning, l
 | `SLIM` | Sparse Linear Methods (elastic net) | Ning & Karypis (2011) |
 | `FTRL` | Follow The Regularized Leader (online GLM) | McMahan et al. (2013) |
 | `FM` | 2nd-order FM (AdaGrad SGD) | Rendle (2010) |
-| `SoftImpute` | Low-rank matrix completion | Hastie et al. (2014) |
+| `SoftImpute` | Low-rank matrix completion (with imputation) | Hastie et al. (2014) |
+| `SoftSVD` | Low-rank SVD (power-iteration style) | Hastie et al. (2014) |
 
 ---
 
@@ -183,7 +184,7 @@ update!(fm, X, y; rng)
 
 ---
 
-### SoftImpute — Low-rank Matrix Completion
+### SoftImpute / SoftSVD — Low-rank Matrix Completion
 
 ```julia
 using Gideon, SparseArrays, LinearAlgebra, Random
@@ -199,8 +200,8 @@ fit!(model, X_observed; rng=rng)
 recon = model.U * Diagonal(model.d) * model.V'
 size(recon)   # (200, 150)
 
-# Use target=:svd for a cleaner low-rank SVD (no imputation correction term)
-model_svd = SoftImpute(rank=5, max_iter=50, target=:svd)
+# SoftSVD: power-iteration style (no imputation correction, faster per iteration)
+model_svd = SoftSVD(rank=5, max_iter=50)
 fit!(model_svd, X_observed; rng=rng)
 ```
 
@@ -260,7 +261,7 @@ Gideon.jl
 │   │   ├── slim.jl        # SLIM (elastic-net item-item)
 │   │   ├── ftrl.jl        # Follow The Regularized Leader (online)
 │   │   ├── fm.jl          # Factorization Machines
-│   │   └── soft_impute.jl # SoftImpute (nuclear-norm matrix completion)
+│   │   └── soft_impute.jl # SoftImpute / SoftSVD (nuclear-norm matrix completion)
 │   └── metrics/
 │       └── ranking.jl     # AP@K, MAP@K, NDCG@K, Precision@K, Recall@K
 ├── ext/
@@ -275,7 +276,9 @@ Gideon.jl
 ```julia
 AbstractSparseModel
 ├── AbstractRecommender
-│   ├── AbstractMatrixFactorization   →  WMF, IALS, EALS, LogisticMF, BPR, GloVe
+│   ├── AbstractMatrixFactorization
+│   │   ├── AbstractSoftALS           →  SoftImpute, SoftSVD
+│   │   └── (others)                  →  WMF, IALS, EALS, LogisticMF, BPR, GloVe
 │   └── AbstractItemSimilarity        →  EASE, SLIM
 └── AbstractSparseRegression      →  FTRL, FM
 ```
